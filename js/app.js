@@ -12,7 +12,7 @@
 /* ---------- 1. KONFIGURASI ------------------------------------------------ */
 const CONFIG = {
   APP_NAME: 'Presensi Ignasian',
-  VERSION: '4.0.0',
+  VERSION: '4.0.1',
   // Ganti dengan URL Google Apps Script Web App Anda setelah deploy
   API_URL: 'https://script.google.com/macros/s/AKfycbyIVir8J18Am5ZW9Q8NdMimXgUvvFnAihv2f6YfATwzgVDfGTJB-iSLpEjjNv-Hm2jA/exec',
   SYNC_INTERVAL: 60000,   // 60 detik saat daring
@@ -324,7 +324,16 @@ async function pullRemote(silent) {
   try {
     const res = await fetch(CONFIG.API_URL + '?action=getAll&t=' + Date.now(), { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch (e) {
+      /* GAS kadang mengembalikan HTML (mis. halaman izin / redirect login).
+         Itu bukan kegagalan jaringan — abaikan diam-diam agar tidak dianggap luring. */
+      console.warn('Sinkron getAll: respons bukan JSON', e);
+      updateSyncUI('ok-local');
+      return false;
+    }
     const changed = mergeRemote(data);
     state.meta.lastSync = new Date().toISOString();
     saveLocal();
@@ -335,7 +344,8 @@ async function pullRemote(silent) {
     updateSyncUI();
     return true;
   } catch (e) {
-    updateSyncUI();
+    console.warn('Sinkron getAll gagal', e);
+    updateSyncUI('error');
     return false;
   }
 }
@@ -365,12 +375,15 @@ function syncNow(manual) {
 }
 
 /* ---------- 8. INDIKATOR STATUS SINKRON --------------------------------- */
-function updateSyncUI() {
+function updateSyncUI(stateOverride) {
   const pend = state.outbox.length;
   let msg = null;
 
+  /* stateOverride dipakai agar kegagalan server tidak dikira luring —
+     data lokal tetap aman di perangkat. */
   if (!apiReady()) msg = 'Mode mandiri · seluruh data tersimpan di perangkat ini';
   else if (!isOnline()) msg = 'Luring · ' + (pend ? pend + ' data menunggu sinkron' : 'data tersimpan lokal, sinkron otomatis saat daring');
+  else if (stateOverride === 'error') msg = 'Sinkron gagal · data tetap aman di perangkat ini';
   else if (state.syncing) msg = 'Menyinkronkan data…';
   else if (pend) msg = pend + ' data menunggu sinkron';
 
@@ -381,7 +394,7 @@ function updateSyncUI() {
   const btn = $('syncBarBtn');
   if (btn) btn.classList.toggle('hidden', !apiReady() || !isOnline());
   const chip = $('userSync');
-  if (chip) chip.textContent = !apiReady() ? 'Luring' : (state.syncing ? 'Sinkron…' : (pend ? pend + ' antre' : 'Sinkron'));
+  if (chip) chip.textContent = !apiReady() ? 'Mandiri' : (!isOnline() ? 'Luring' : (state.syncing ? 'Sinkron…' : (pend ? pend + ' antre' : (state.meta.lastSync ? 'Sinkron' : 'Daring'))));
 
   if ($('page-pengaturan') && !$('page-pengaturan').classList.contains('hidden')) renderSettingsSync();
 }
@@ -449,10 +462,14 @@ function canAccess(page) {
   return need ? roleAllows(need) : !!state.currentUser;
 }
 
-/* Sembunyikan menu/halaman yang bukan hak pengguna (mis. LOG, JADWAL,
-   dan BUAT QR tidak tampil bagi PESERTA). */
+/* Sembunyikan HANYA tombol/menu berbasis peran (mis. LOG, JADWAL, BUAT QR
+   tidak tampil bagi PESERTA). JANGAN sembunyikan section.page / kartu di sini:
+   visibilitas halaman dikendalikan penuh oleh showPage() + renderHome().
+   Menyentuh .page di sini membuat banyak halaman admin tampil bertumpuk. */
 function applyRoleVisibility() {
   document.querySelectorAll('[data-role]').forEach(el => {
+    if (el.classList && el.classList.contains('page')) return;
+    if (el.id === 'homeActivityCard') return;
     el.classList.toggle('hidden', !roleAllows(el.getAttribute('data-role')));
   });
   document.querySelectorAll('[data-admin-note]').forEach(el => {
@@ -558,6 +575,7 @@ function showPage(name, btn) {
 
   state.activePage = name;
 
+  applyRoleVisibility();
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   const target = $('page-' + name);
   if (target) target.classList.remove('hidden');
@@ -568,7 +586,6 @@ function showPage(name, btn) {
   });
   if (btn) btn.classList.add('active');
 
-  applyRoleVisibility();
   renderPage(name);
 
   if (('#' + name) !== location.hash) {
@@ -962,7 +979,12 @@ async function stopScanner() {
 async function onScanSuccess(decoded) {
   await stopScanner();
   try {
-    const payload = JSON.parse(atob(decoded));
+    let payload;
+    try {
+      payload = JSON.parse(decodeURIComponent(escape(atob(decoded))));
+    } catch (e2) {
+      payload = JSON.parse(atob(decoded));
+    }
     if (payload.type !== 'PRESENSI_IGNASIAN') throw new Error('Kode QR bukan milik Presensi Ignasian');
 
     const start = new Date(payload.start).getTime();
@@ -1302,13 +1324,23 @@ function deleteJadwal(id) {
 /* ---------- 23. PEMBUAT QR (ADMIN & PENGURUS) -------------------------- */
 function renderQrJadwalSelect() {
   const sel = $('qrJadwal');
+  if (!sel) return;
   if (!state.jadwal.length) {
-    sel.innerHTML = '<option value="">Belum ada jadwal</option>';
+    sel.innerHTML = '<option value="">Belum ada jadwal — buat dahulu di menu Jadwal</option>';
     return;
   }
-  const sorted = state.jadwal.slice().sort((a, b) => new Date(b.tanggal) - new Date(a.tanggal));
+  /* SEMUA jadwal tampil (termasuk yang akan datang) agar QR bisa dicetak
+     sebelum acara. Jadwal yang sedang aktif diberi penanda. */
+  const now = Date.now();
+  const sorted = state.jadwal.slice().sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
   sel.innerHTML = sorted
-    .map(j => `<option value="${esc(j.id)}">${esc(j.nama)} — ${fmtDateTime(j.tanggal)}</option>`)
+    .map(j => {
+      const t = new Date(j.tanggal).getTime();
+      const end = t + (j.durasi || 60) * 60000;
+      const aktif = now >= t - 3600000 && now <= end + 3600000;
+      const label = j.nama + ' — ' + fmtDateTime(j.tanggal) + (aktif ? ' ● AKTIF' : '');
+      return `<option value="${esc(j.id)}">${esc(label)}</option>`;
+    })
     .join('');
 }
 
@@ -1331,17 +1363,24 @@ function qrPayload(j) {
 function generateQR() {
   if (!isStaff()) { toast('Hanya Administrator & Pengurus yang dapat membuat QR', 'error'); return; }
 
-  const id = $('qrJadwal').value;
+  const sel = $('qrJadwal');
+  const id = sel ? sel.value : '';
   if (!id) { toast('Pilih jadwal terlebih dahulu', 'error'); return; }
-  const j = state.jadwal.find(x => x.id === id);
-  if (!j) return;
+  const j = state.jadwal.find(x => String(x.id) === String(id));
+  if (!j) { toast('Jadwal tidak ditemukan', 'error'); return; }
 
   if (typeof QRCode === 'undefined') {
-    toast('Pustaka QR belum termuat (peranti luring). Sambungkan sekali ke internet.', 'error');
+    toast('Pustaka QR belum termuat (peranti luring). Sambungkan sekali ke internet, lalu muat ulang.', 'error');
     return;
   }
 
-  const qrData = btoa(JSON.stringify(qrPayload(j)));
+  let qrData;
+  try {
+    qrData = btoa(unescape(encodeURIComponent(JSON.stringify(qrPayload(j)))));
+  } catch (e) {
+    toast('Data jadwal tidak dapat dikodekan: ' + e.message, 'error');
+    return;
+  }
   addLog('GENERATE_QR', { jadwalId: j.id, nama: j.nama });
 
   $('qrResult').innerHTML = `
@@ -1355,38 +1394,70 @@ function generateQR() {
       </div>
     </div>`;
 
+  const box = $('qrCanvas');
+  box.innerHTML = '';
+  try {
+    /* Pustaka qrcodejs (davidshimjs): new QRCode(el, {text,width,height,...}) */
+    if (typeof QRCode === 'function' && !QRCode.toCanvas) {
+      new QRCode(box, {
+        text: qrData,
+        width: 280, height: 280,
+        colorDark: '#6E2632', colorLight: '#FAF7F2',
+        correctLevel: (QRCode.CorrectLevel ? QRCode.CorrectLevel.M : 0)
+      });
+      const img = box.querySelector('img');
+      const table = box.querySelector('table');
+      if (img) { img.id = 'qrFinalImg'; img.style.width = '280px'; img.style.height = '280px'; }
+      if (table) table.id = 'qrFinalCanvas';
+      return;
+    }
+  } catch (e) {
+    toast('QR gagal dibuat: ' + e.message, 'error');
+    return;
+  }
+
+  /* Pustaka node-qrcode (soldair): QRCode.toCanvas(canvas, text, opts, cb) */
   const holder = document.createElement('canvas');
-  QRCode.toCanvas(holder, qrData, {
-    width: 280, margin: 2,
-    color: { dark: '#6E2632', light: '#FAF7F2' }
-  }, (err, canvas) => {
-    if (err) { toast('QR gagal dibuat', 'error'); return; }
-    canvas.id = 'qrFinalCanvas';
-    $('qrCanvas').innerHTML = '';
-    $('qrCanvas').appendChild(canvas);
-  });
+  try {
+    QRCode.toCanvas(holder, qrData, {
+      width: 280, margin: 2,
+      color: { dark: '#6E2632', light: '#FAF7F2' }
+    }, (err, canvas) => {
+      if (err) { toast('QR gagal dibuat', 'error'); return; }
+      canvas.id = 'qrFinalCanvas';
+      box.innerHTML = '';
+      box.appendChild(canvas);
+    });
+  } catch (e) {
+    toast('QR gagal dibuat: ' + e.message, 'error');
+  }
 }
 
 function downloadQR(nama) {
   const canvas = $('qrFinalCanvas');
-  if (!canvas) return;
+  const img = $('qrFinalImg');
+  const src = canvas ? canvas.toDataURL()
+    : (img ? img.src : null);
+  if (!src) { toast('Belum ada QR untuk diunduh', 'error'); return; }
   const a = document.createElement('a');
   a.download = 'QR_' + String(nama).replace(/\s+/g, '_') + '.png';
-  a.href = canvas.toDataURL();
+  a.href = src;
   a.click();
   toast('QR diunduh', 'success');
 }
 
 function printQR() {
   const canvas = $('qrFinalCanvas');
-  if (!canvas) return;
+  const img = $('qrFinalImg');
+  const src = canvas ? canvas.toDataURL() : (img ? img.src : null);
+  if (!src) { toast('Belum ada QR untuk dicetak', 'error'); return; }
   const w = window.open('', '', 'width=420,height=560');
   if (!w) { toast('Jendela cetak diblokir peramban', 'error'); return; }
   w.document.write(
     '<html><head><title>QR Presensi Ignasian</title></head>' +
     '<body style="text-align:center;font-family:Cinzel,Georgia,serif;padding:24px">' +
     '<h2 style="color:#6E2632;letter-spacing:.08em">PRESENSI IGNASIAN</h2>' +
-    '<img src="' + canvas.toDataURL() + '" style="width:300px"/>' +
+    '<img src="' + src + '" style="width:300px"/>' +
     '<p style="font-family:Georgia,serif;font-size:13px;color:#5a4a3a">' +
     'Pindai kode ini untuk mencatat kehadiran. Ad Maiorem Dei Gloriam.</p>' +
     '</body></html>');

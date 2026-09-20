@@ -115,7 +115,7 @@
         <p class="tiny muted mt-10" id="homeScope"></p>
       </div>
 
-      <div class="card" id="homeActivityCard" data-role="staff">
+      <div class="card" id="homeActivityCard">
         <div class="card-title"><span class="ic" data-ic="ledger"></span>Aktivitas Terbaru</div>
         <p class="card-sub">Catatan sistem — hanya untuk Administrator &amp; Pengurus.</p>
         <div id="homeActivity"></div>
@@ -392,7 +392,7 @@
           <span class="ic" data-ic="cross"></span>
           <div class="body">
             <div class="name">Presensi Ignasian</div>
-            <div class="desc">Versi 4.0.0 · Ignatian Edition · © 2026</div>
+            <div class="desc">Versi 4.0.1 · Ignatian Edition · © 2026</div>
           </div>
         </div>
         <p class="tiny muted center">Ad Maiorem Dei Gloriam</p>
@@ -452,7 +452,7 @@
     </section>
 
     <!-- ============ REGISTRASI PENGGUNA (ADMIN) ============ -->
-    <section id="page-registrasi" class="page hidden" data-role="admin">
+    <section id="page-registrasi" class="page hidden">
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="quill"></span>Registrasi Pengguna Baru</div>
         <p class="card-sub">Hanya Administrator yang berwenang menambah pengguna.</p>
@@ -497,7 +497,7 @@
     </section>
 
     <!-- ============ MANAJEMEN PESERTA (ADMIN) ============ -->
-    <section id="page-users" class="page hidden" data-role="admin">
+    <section id="page-users" class="page hidden">
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="halopair"></span>Manajemen Peserta</div>
         <button class="btn btn-gold btn-sm mb-14" type="button" onclick="showPage('registrasi')">
@@ -513,7 +513,7 @@
     </section>
 
     <!-- ============ JADWAL & VENUE (ADMIN & PENGURUS) ============ -->
-    <section id="page-jadwal" class="page hidden" data-role="staff">
+    <section id="page-jadwal" class="page hidden">
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="horarium"></span>Jadwal &amp; Venue Acara</div>
         <p class="card-sub">
@@ -571,7 +571,7 @@
     </section>
 
     <!-- ============ PEMBUAT QR (ADMIN & PENGURUS) ============ -->
-    <section id="page-qr-gen" class="page hidden" data-role="staff">
+    <section id="page-qr-gen" class="page hidden">
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="matrix"></span>Pembuat Kode QR</div>
         <p class="card-sub">
@@ -590,7 +590,7 @@
     </section>
 
     <!-- ============ LOG SISTEM (ADMIN & PENGURUS) ============ -->
-    <section id="page-log" class="page hidden" data-role="staff">
+    <section id="page-log" class="page hidden">
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="ledger"></span>Log Aktivitas Sistem</div>
         <p class="card-sub">
@@ -634,7 +634,7 @@
 
 <!-- Pustaka pendukung (disimpan di cache service worker untuk pemakaian luring) -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
 <!-- Kode aplikasi: ikon kustom lalu inti aplikasi -->

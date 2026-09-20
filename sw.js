@@ -8,7 +8,7 @@
    • CDN luar  : stale-while-revalidate (peta, font, pustaka QR).
    • Data ke Google Apps Script tidak pernah di-cache (selalu daring).
    ========================================================================== */
-const VERSION = 'v5';
+const VERSION = 'v6';
 const SHELL_CACHE = 'ign-shell-' + VERSION;
 const RUNTIME_CACHE = 'ign-runtime-' + VERSION;
 
@@ -34,7 +34,7 @@ const RUNTIME = [
   'https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
-  'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js',
+  'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js',
   'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js'
 ];
 
