@@ -321,8 +321,23 @@ function mergeRemote(data) {
 
 async function pullRemote(silent) {
   if (!apiReady() || !isOnline()) { updateSyncUI(); return false; }
+  /* Jangan spam server yang URL-nya salah/404: jeda 5 menit setelah gagal,
+     agar console tidak penuh "GET ... 404" seperti di laporan. */
+  if (state.backoffUntil && Date.now() < state.backoffUntil) { updateSyncUI('error'); return false; }
   try {
-    const res = await fetch(CONFIG.API_URL + '?action=getAll&t=' + Date.now(), { cache: 'no-store' });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    let res;
+    try {
+      res = await fetch(CONFIG.API_URL + '?action=getAll&t=' + Date.now(), { cache: 'no-store', signal: ctrl.signal });
+    } finally { clearTimeout(timer); }
+    if (res.status === 404) {
+      state.backoffUntil = Date.now() + 5 * 60 * 1000;
+      state.apiHint = 'URL Apps Script 404 — deploy ulang GAS sebagai Web App (akses: Anyone) lalu ganti CONFIG.API_URL. Data tetap aman lokal.';
+      console.warn('Sinkron getAll: HTTP 404 — URL Web App salah / belum deploy Anyone. Backoff 5 menit.');
+      updateSyncUI('error');
+      return false;
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     let data;
     try {
@@ -330,10 +345,10 @@ async function pullRemote(silent) {
     } catch (e) {
       /* GAS kadang mengembalikan HTML (mis. halaman izin / redirect login).
          Itu bukan kegagalan jaringan — abaikan diam-diam agar tidak dianggap luring. */
-      console.warn('Sinkron getAll: respons bukan JSON', e);
       updateSyncUI('ok-local');
       return false;
     }
+    state.apiHint = null;
     const changed = mergeRemote(data);
     state.meta.lastSync = new Date().toISOString();
     saveLocal();
@@ -344,8 +359,8 @@ async function pullRemote(silent) {
     updateSyncUI();
     return true;
   } catch (e) {
-    console.warn('Sinkron getAll gagal', e);
-    updateSyncUI('error');
+    if (e && e.name === 'AbortError') updateSyncUI('error');
+    else updateSyncUI('error');
     return false;
   }
 }
@@ -383,7 +398,7 @@ function updateSyncUI(stateOverride) {
      data lokal tetap aman di perangkat. */
   if (!apiReady()) msg = 'Mode mandiri · seluruh data tersimpan di perangkat ini';
   else if (!isOnline()) msg = 'Luring · ' + (pend ? pend + ' data menunggu sinkron' : 'data tersimpan lokal, sinkron otomatis saat daring');
-  else if (stateOverride === 'error') msg = 'Sinkron gagal · data tetap aman di perangkat ini';
+  else if (stateOverride === 'error') msg = state.apiHint || ('Sinkron gagal · data tetap aman di perangkat ini' + (pend ? ' · ' + pend + ' antre' : ''));
   else if (state.syncing) msg = 'Menyinkronkan data…';
   else if (pend) msg = pend + ' data menunggu sinkron';
 
@@ -822,16 +837,36 @@ function initMap() {
 }
 
 /* Ambil posisi GPS — dipakai layar presensi manual */
+function gpsErrorMessage(err) {
+  const code = err && err.code;
+  const msg = String((err && err.message) || '');
+  /* 1 = PERMISSION_DENIED — penyebab "Uncaught (in promise) NotAllowedError"
+     yang muncul di console halaman Laporan walau user merasa sudah allow. */
+  if (code === 1 || /denied|not allowed|permission/i.test(msg))
+    return 'Izin lokasi ditolak. Ketuk ikon lokasi/gembok di address bar, izinkan Lokasi untuk situs ini, lalu muat ulang. Aplikasi tetap berjalan — data tersimpan lokal, sinkron menyusul.';
+  if (code === 2 || /unavailable|position/i.test(msg))
+    return 'Posisi tidak tersedia (GPS lemah / di dalam gedung). Dekatkan ke jendela / luar ruangan lalu tekan "Perbarui Lokasi".';
+  if (code === 3 || /timeout/i.test(msg))
+    return 'Pengambilan lokasi kehabisan waktu. Tekan "Perbarui Lokasi" untuk mencoba lagi.';
+  return 'Lokasi tidak dapat dibaca: ' + (msg || 'kesalahan tidak dikenal');
+}
+
 function locateUser(moveMap) {
   const info = $('gpsInfo');
   if (!navigator.geolocation) {
     if (info) info.textContent = 'Peranti ini tidak mendukung layanan lokasi.';
-    return;
+    return Promise.resolve(null);
+  }
+  if (!window.isSecureContext) {
+    if (info) info.textContent = 'Lokasi membutuhkan HTTPS/localhost — buka aplikasi via koneksi aman agar GPS aktif.';
+    return Promise.resolve(null);
   }
   if (info) info.textContent = 'Mengambil titik lokasi…';
-  navigator.geolocation.getCurrentPosition(pos => {
-    state.userLat = pos.coords.latitude;
-    state.userLng = pos.coords.longitude;
+  return new Promise(resolve => {
+    try {
+      navigator.geolocation.getCurrentPosition(pos => {
+        state.userLat = pos.coords.latitude;
+        state.userLng = pos.coords.longitude;
     if (info) {
       info.textContent = 'Lokasi: ' + state.userLat.toFixed(6) + ', ' + state.userLng.toFixed(6) +
         ' (±' + Math.round(pos.coords.accuracy || 0) + ' m)';
@@ -844,9 +879,18 @@ function locateUser(moveMap) {
       }
       if (moveMap) state.map.setView([state.userLat, state.userLng], 16);
     }
+    resolve(pos);
   }, err => {
-    if (info) info.textContent = 'Lokasi tidak dapat dibaca: ' + err.message;
+    /* Jangan biarkan promise menggantung / uncaught — ini sumber error console. */
+    const msg = gpsErrorMessage(err);
+    if (info) info.textContent = msg;
+    resolve(null);
   }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+    } catch (e) {
+      if (info) info.textContent = gpsErrorMessage(e);
+      resolve(null);
+    }
+  });
 }
 
 function initMapJadwal() {
@@ -869,17 +913,21 @@ function initMapJadwal() {
 
 function pickLocation() {
   if (!navigator.geolocation) { toast('Peranti ini tidak mendukung layanan lokasi', 'error'); return; }
-  navigator.geolocation.getCurrentPosition(pos => {
-    $('jadwalLat').value = pos.coords.latitude.toFixed(7);
-    $('jadwalLng').value = pos.coords.longitude.toFixed(7);
-    if (state.mapJadwal && typeof L !== 'undefined') {
-      const ll = [pos.coords.latitude, pos.coords.longitude];
-      if (state.markerJadwal) state.mapJadwal.removeLayer(state.markerJadwal);
-      state.markerJadwal = L.marker(ll).addTo(state.mapJadwal);
-      state.mapJadwal.setView(ll, 17);
-    }
-    toast('Koordinat venue diambil dari posisi Anda', 'success');
-  }, err => toast('Gagal mengambil lokasi: ' + err.message, 'error'), { enableHighAccuracy: true });
+  if (!window.isSecureContext) { toast('Lokasi membutuhkan HTTPS/localhost', 'error'); return; }
+  toast('Mengambil titik lokasi…', 'info');
+  try {
+    navigator.geolocation.getCurrentPosition(pos => {
+      $('jadwalLat').value = pos.coords.latitude.toFixed(7);
+      $('jadwalLng').value = pos.coords.longitude.toFixed(7);
+      if (state.mapJadwal && typeof L !== 'undefined') {
+        const ll = [pos.coords.latitude, pos.coords.longitude];
+        if (state.markerJadwal) state.mapJadwal.removeLayer(state.markerJadwal);
+        state.markerJadwal = L.marker(ll).addTo(state.mapJadwal);
+        state.mapJadwal.setView(ll, 17);
+      }
+      toast('Koordinat venue diambil dari posisi Anda', 'success');
+    }, err => toast(gpsErrorMessage(err), 'error'), { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+  } catch (e) { toast(gpsErrorMessage(e), 'error'); }
 }
 
 function haversine(lat1, lon1, lat2, lon2) {
@@ -1101,6 +1149,12 @@ async function onScanSuccess(decoded) {
     if (!navigator.geolocation) throw new Error('Peranti ini tidak mendukung layanan lokasi');
 
     toast('Membaca titik lokasi…', 'info');
+    if (!window.isSecureContext) {
+      toast('Lokasi membutuhkan HTTPS/localhost — buka aplikasi via koneksi aman.', 'error');
+      addLog('SCAN_ERROR', { error: 'insecure-context' });
+      return;
+    }
+    try {
     navigator.geolocation.getCurrentPosition(pos => {
       const dist = haversine(pos.coords.latitude, pos.coords.longitude, payload.lat, payload.lng);
       if (dist > payload.radius) {
@@ -1138,8 +1192,13 @@ async function onScanSuccess(decoded) {
         '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">' +
         ic('seal') + 'Selesai</button></div>');
     }, err => {
-      toast('Lokasi tidak dapat dibaca: ' + err.message, 'error');
-    }, { enableHighAccuracy: true, timeout: 12000 });
+      toast(gpsErrorMessage(err), 'error');
+      addLog('PRESENSI_GAGAL', { reason: String((err && err.message) || err), jadwalId: payload.jadwalId });
+    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+    } catch (e) {
+      toast(gpsErrorMessage(e), 'error');
+      addLog('SCAN_ERROR', { error: String((e && e.message) || e) });
+    }
   } catch (e) {
     toast(e.message, 'error');
     addLog('SCAN_ERROR', { error: e.message });
@@ -1183,7 +1242,166 @@ function prepareLaporan() {
       ? 'Rekapitulasi seluruh peserta dalam rentang tanggal.'
       : 'Rekapitulasi pribadi Anda dalam rentang tanggal.';
   }
+  renderLaporanAcaraSelect();
   generateLaporan();
+  renderLaporanAcara();
+}
+
+function laporanAcaraId() {
+  const sel = $('laporanAcara');
+  return sel ? sel.value : '';
+}
+
+function renderLaporanAcaraSelect() {
+  const sel = $('laporanAcara');
+  if (!sel) return;
+  const cur = sel.value;
+  const sorted = (state.jadwal || []).slice()
+    .sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
+  sel.innerHTML = sorted.length
+    ? sorted.map(j => `<option value="${esc(j.id)}">${esc(j.nama)} — ${esc(fmtDate(j.tanggal))}</option>`).join('')
+    : '<option value="">— belum ada acara —</option>';
+  if (cur && sorted.some(j => String(j.id) === String(cur))) sel.value = cur;
+}
+
+function laporanAcaraRows() {
+  const id = laporanAcaraId();
+  if (!id) return { jadwal: null, rows: [] };
+  const jadwal = (state.jadwal || []).find(j => String(j.id) === String(id)) || null;
+  const rows = state.presensi
+    .filter(p => String(p.jadwalId) === String(id))
+    .sort((a, b) => String(a.userName || '').localeCompare(String(b.userName || ''), 'id'));
+  return { jadwal: jadwal, rows: rows };
+}
+
+function hariID(iso) {
+  try {
+    return new Date(iso).toLocaleDateString('id-ID', { weekday: 'long' });
+  } catch (e) { return '-'; }
+}
+
+function renderLaporanAcara() {
+  const body = $('laporanAcaraBody');
+  const info = $('laporanAcaraInfo');
+  if (!body) return;
+  const r = laporanAcaraRows();
+  if (!r.jadwal) {
+    if (info) info.textContent = 'Pilih acara untuk melihat daftar hadir.';
+    body.innerHTML = '<tr><td colspan="7"><div class="empty">' + ic('bulla', 'ic-lg') +
+      '<div>Belum ada acara dipilih</div></div></td></tr>';
+    return;
+  }
+  const j = r.jadwal;
+  const nHadir = r.rows.filter(x => x.status === 'hadir').length;
+  if (info) info.textContent = j.nama + ' · ' + hariID(j.tanggal) + ', ' +
+    fmtDateTime(j.tanggal) + ' · ' + j.venue + ' · radius ' + j.radius +
+    ' m · ' + nHadir + ' hadir / ' + r.rows.length + ' tercatat';
+  if (!r.rows.length) {
+    body.innerHTML = '<tr><td colspan="7"><div class="empty">' + ic('codex', 'ic-lg') +
+      '<div>Belum ada presensi pada acara ini</div></div></td></tr>';
+    return;
+  }
+  body.innerHTML = r.rows.map((p, i) => `<tr>
+      <td data-label="No">${i + 1}</td>
+      <td data-label="Nama">${esc(p.userName || '-')}</td>
+      <td data-label="Status"><span class="badge badge-${esc(p.status)}">${esc(p.status)}</span></td>
+      <td data-label="Waktu">${esc(fmtDate(p.timestamp))}<div class="tiny muted">${esc(fmtTime(p.timestamp))}</div></td>
+      <td data-label="Metode">${p.metode === 'qr' ? 'Pindai QR' : 'GPS'}</td>
+      <td data-label="Jarak">${(p.distance == null || isNaN(p.distance)) ? '-' : Number(p.distance).toFixed(0) + ' m'}</td>
+      <td data-label="Ket.">${esc(p.keterangan || '')}</td>
+    </tr>`).join('');
+}
+
+function csvCell(v) {
+  const s = String(v == null ? '' : v);
+  return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+/* Unduh CSV (delimiter ';' + BOM — langsung rapi dibuka di Excel Indonesia).
+   mode 'acara' = daftar hadir satu acara; 'rekap' = rekap rentang tanggal. */
+function exportLaporanCSV(mode) {
+  let head = [];
+  let lines = [];
+  let fname = 'laporan.csv';
+  if (mode === 'rekap') {
+    const from = $('laporanFrom').value || '';
+    const to = $('laporanTo').value || '';
+    const f = new Date(from); const t = new Date(to); t.setHours(23, 59, 59, 999);
+    const people = isStaff()
+      ? state.users.filter(u => u.role === 'peserta')
+      : state.users.filter(u => u.id === state.currentUser.id);
+    head = ['Nama', 'Username', 'Hadir', 'Izin', 'Tanpa Ket.', 'Persentase'];
+    lines = people.map(u => {
+      const up = state.presensi.filter(p => p.userId === u.id &&
+        (!from || !to || (new Date(p.timestamp) >= f && new Date(p.timestamp) <= t)));
+      const h = up.filter(p => p.status === 'hadir').length;
+      const iz = up.filter(p => p.status === 'izin').length;
+      const pct = up.length ? Math.round(h / up.length * 100) + '%' : '0%';
+      return [u.nama, u.username, h, iz, Math.max(0, up.length - h - iz), pct].map(csvCell).join(';');
+    });
+    fname = 'rekap_' + (from || 'semua') + '_' + (to || 'semua') + '.csv';
+  } else {
+    const r = laporanAcaraRows();
+    if (!r.jadwal) { toast('Pilih acara terlebih dahulu', 'error'); return; }
+    const j = r.jadwal;
+    head = ['No', 'Tanggal', 'Hari', 'Acara', 'Venue', 'Nama Peserta', 'Status',
+      'Waktu Presensi', 'Metode', 'Jarak (m)', 'Keterangan'];
+    lines = r.rows.map((p, i) => [i + 1, fmtDate(j.tanggal), hariID(j.tanggal), j.nama, j.venue,
+      p.userName, p.status, fmtDateTime(p.timestamp), p.metode === 'qr' ? 'Pindai QR' : 'GPS',
+      (p.distance == null || isNaN(p.distance)) ? '' : Math.round(p.distance),
+      p.keterangan || ''].map(csvCell).join(';'));
+    fname = 'hadir_' + String(j.nama).replace(/\s+/g, '_') + '_' + String(j.tanggal).slice(0, 10) + '.csv';
+  }
+  const blob = new Blob(['\ufeff' + head.map(csvCell).join(';') + '\r\n' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  try { addLog('EXPORT_LAPORAN', { mode: mode, file: fname }); } catch (e) {}
+  toast('Berkas ' + fname + ' diunduh — buka dengan Excel', 'success');
+}
+
+/* Cetak PDF via dialog cetak browser (pilih "Save as PDF").
+   Hanya kop + tabel acara yang dicetak agar rapi di kertas. */
+function printLaporanAcara() {
+  const r = laporanAcaraRows();
+  if (!r.jadwal) { toast('Pilih acara terlebih dahulu', 'error'); return; }
+  if (!r.rows.length) { toast('Belum ada presensi pada acara ini', 'error'); return; }
+  const j = r.jadwal;
+  const nHadir = r.rows.filter(x => x.status === 'hadir').length;
+  const nIzin = r.rows.filter(x => x.status === 'izin').length;
+  const rowsHtml = r.rows.map((p, i) =>
+    '<tr><td>' + (i + 1) + '</td><td>' + esc(p.userName || '-') + '</td>' +
+    '<td>' + esc(p.status) + '</td><td>' + esc(fmtDateTime(p.timestamp)) + '</td>' +
+    '<td>' + (p.metode === 'qr' ? 'Pindai QR' : 'GPS') + '</td>' +
+    '<td>' + esc(p.keterangan || '-') + '</td></tr>').join('');
+  const w = window.open('', '_blank', 'width=900,height=700');
+  if (!w) { toast('Popup diblokir — izinkan popup untuk mencetak', 'error'); return; }
+  w.document.write('<!DOCTYPE html><html lang="id"><head><meta charset="utf-8">' +
+    '<title>Daftar Hadir — ' + esc(j.nama) + '</title>' +
+    '<style>body{font-family:Georgia,serif;color:#111;margin:28px}' +
+    'h1{font-size:20px;margin:0}.sub{color:#555;font-size:13px;margin:4px 0 14px}' +
+    'table{width:100%;border-collapse:collapse;font-size:13px}' +
+    'th,td{border:1px solid #999;padding:6px 8px;text-align:left}th{background:#eee}' +
+    '.kop{text-align:center;border-bottom:3px double #333;padding-bottom:10px;margin-bottom:14px}' +
+    '.sig{display:flex;justify-content:space-between;margin-top:34px;font-size:13px}' +
+    '@media print{.noprint{display:none}}</style></head><body>' +
+    '<div class="kop"><h1>PRESENSI IGNASIAN — DAFTAR HADIR</h1><div>Ad Maiorem Dei Gloriam</div></div>' +
+    '<h1>' + esc(j.nama) + '</h1>' +
+    '<p class="sub">Hari: ' + esc(hariID(j.tanggal)) + ' · Tanggal: ' + esc(fmtDateTime(j.tanggal)) +
+    ' · Venue: ' + esc(j.venue) + ' · Radius: ' + esc(j.radius) + ' m<br>Hadir: ' + nHadir +
+    ' · Izin: ' + nIzin + ' · Total tercatat: ' + r.rows.length + '</p>' +
+    '<table><thead><tr><th>No</th><th>Nama Peserta</th><th>Status</th>' +
+    '<th>Waktu</th><th>Metode</th><th>Keterangan</th></tr></thead><tbody>' +
+    rowsHtml + '</tbody></table>' +
+    '<div class="sig"><div>Mengetahui,<br><br><br>(___________________)</div>' +
+    '<div>Petugas,<br><br><br>(___________________)</div></div>' +
+    '<p class="noprint"><button onclick="window.print()">Cetak / Simpan PDF</button></p>' +
+    '</body></html>');
+  w.document.close();
+  try { addLog('PRINT_LAPORAN', { jadwalId: j.id, nama: j.nama }); } catch (e) {}
 }
 
 function generateLaporan() {

@@ -224,6 +224,10 @@
             <input type="date" id="laporanTo" class="form-control" />
           </div>
         </div>
+        <div class="form-group" data-role="staff">
+          <label for="laporanAcara">Acara (untuk cetak/ekspor per acara)</label>
+          <select id="laporanAcara" class="form-control" onchange="renderLaporanAcara()"></select>
+        </div>
         <button class="btn btn-outline" type="button" onclick="generateLaporan()">
           <span class="ic" data-ic="bulla"></span>Tampilkan
         </button>
@@ -233,6 +237,30 @@
             <thead><tr><th>Nama</th><th>Hadir</th><th>Izin</th><th>Tanpa Ket.</th><th>%</th></tr></thead>
             <tbody id="laporanBody"></tbody>
           </table>
+        </div>
+        <div class="divider" data-role="staff"></div>
+        <div data-role="staff">
+          <h3 class="mb-8">Daftar Hadir per Acara</h3>
+          <p class="card-sub" id="laporanAcaraInfo">Pilih acara untuk melihat daftar hadir.</p>
+          <div class="table-wrap scroll-y">
+            <table class="responsive">
+              <thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Waktu</th><th>Metode</th><th>Jarak</th><th>Ket.</th></tr></thead>
+              <tbody id="laporanAcaraBody"></tbody>
+            </table>
+          </div>
+          <div class="btn-row mt-14">
+            <button class="btn btn-gold btn-sm" type="button" onclick="exportLaporanCSV('acara')">
+              <span class="ic" data-ic="descend"></span>Unduh CSV/Excel
+            </button>
+            <button class="btn btn-outline btn-sm" type="button" onclick="printLaporanAcara()">
+              <span class="ic" data-ic="seal"></span>Cetak PDF
+            </button>
+          </div>
+          <div class="btn-row mt-10">
+            <button class="btn btn-outline btn-sm" type="button" onclick="exportLaporanCSV('rekap')">
+              <span class="ic" data-ic="descend"></span>Unduh Rekap CSV
+            </button>
+          </div>
         </div>
       </div>
     </section>
