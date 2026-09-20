@@ -14,7 +14,7 @@ const CONFIG = {
   APP_NAME: 'Presensi Ignasian',
   VERSION: '4.0.0',
   // Ganti dengan URL Google Apps Script Web App Anda setelah deploy
-  API_URL: 'https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbyIVir8J18Am5ZW9Q8NdMimXgUvvFnAihv2f6YfATwzgVDfGTJB-iSLpEjjNv-Hm2jA/exec',
   SYNC_INTERVAL: 60000,   // 60 detik saat daring
   MAX_USERS: 50,
   MAX_QUEUE: 500,
