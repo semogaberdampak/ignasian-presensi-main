@@ -1,0 +1,51 @@
+/* css/base.css — BASE: reset, body, judul, utilitas kecil. Urutan muat: variables > base > layout > components > pages > utilities. */
+/* ---------- 2. DASAR ----------------------------------------------------- */
+*,*::before,*::after{box-sizing:border-box}
+*{margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+
+body{
+  min-height:100vh;
+  min-height:100dvh;
+  font-family:var(--font-text);
+  font-size:17px;
+  line-height:1.55;
+  color:var(--text);
+  background:var(--bg);
+  overflow-x:hidden;
+  overscroll-behavior-y:contain;
+  -webkit-font-smoothing:antialiased;
+  padding-bottom:calc(var(--nav-h) + var(--safe-b) + 8px);
+}
+
+h1,h2,h3,h4{
+  font-family:var(--font-display);
+  font-weight:600;
+  letter-spacing:.03em;
+  line-height:1.22;
+  color:var(--brand);
+}
+h1{font-size:1.5rem}
+h2{font-size:1.22rem}
+h3{font-size:1.02rem}
+h4{font-size:.9rem}
+
+p,li{color:var(--text-soft)}
+strong,b{font-weight:600;color:var(--text)}
+
+a{color:var(--brand-2);text-underline-offset:2px}
+code{
+  font-family:'Cascadia Mono',Consolas,'Courier New',monospace;
+  font-size:.86em;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r-xs);
+  padding:1px 6px;color:var(--brand);
+}
+
+img,canvas,svg,video{max-width:100%}
+canvas{height:auto}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:none;box-shadow:var(--focus);border-radius:var(--r-xs)}
+::selection{background:var(--gold-tint)}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--gold);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}

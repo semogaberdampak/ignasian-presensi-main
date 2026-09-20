@@ -1,0 +1,107 @@
+/* css/layout.css — LAYOUT: header, sinkron, nav bawah, container. Urutan muat: variables > base > layout > components > pages > utilities. */
+/* ---------- 3. RANGKA APLIKASI ------------------------------------------ */
+.shell{max-width:760px;margin:0 auto;padding:0 var(--safe-r) 0 var(--safe-l)}
+
+.app-header{
+  position:sticky;top:0;z-index:90;
+  background:var(--head-bg);color:var(--head-ink);
+  padding:calc(12px + var(--safe-t)) calc(16px + var(--safe-r)) 12px calc(16px + var(--safe-l));
+  box-shadow:var(--shadow-2);
+  border-bottom:1px solid rgba(0,0,0,.12);
+}
+.app-header .brand{display:flex;align-items:center;gap:12px;max-width:760px;margin:0 auto}
+.app-header h1{color:var(--head-ink);font-size:1.02rem;letter-spacing:.07em;text-transform:uppercase}
+.app-header .motto{
+  font-family:var(--font-display);
+  font-size:.66rem;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--head-accent);margin-top:3px;
+}
+
+/* Lambang IHS — monogram Ignatian bersinar */
+.crest{
+  position:relative;flex:0 0 auto;
+  width:44px;height:44px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-display);font-weight:700;font-size:.8rem;letter-spacing:.02em;
+  color:#3B1109;background:radial-gradient(circle at 50% 38%,var(--gold-2),var(--gold) 72%);
+  box-shadow:0 0 0 1px rgba(0,0,0,.25),0 0 0 4px rgba(255,255,255,.10),inset 0 0 10px rgba(255,255,255,.35);
+  text-shadow:0 1px 0 rgba(255,255,255,.35);
+}
+.crest::after{
+  content:'';position:absolute;inset:-7px;border-radius:50%;
+  background:conic-gradient(from 0deg,
+    var(--head-accent) 0deg 6deg,transparent 6deg 40deg,
+    var(--head-accent) 40deg 46deg,transparent 46deg 85deg,
+    var(--head-accent) 85deg 91deg,transparent 91deg 130deg,
+    var(--head-accent) 130deg 136deg,transparent 136deg 175deg,
+    var(--head-accent) 175deg 181deg,transparent 181deg 220deg,
+    var(--head-accent) 220deg 226deg,transparent 226deg 265deg,
+    var(--head-accent) 265deg 271deg,transparent 271deg 310deg,
+    var(--head-accent) 310deg 316deg,transparent 316deg 355deg,
+    var(--head-accent) 355deg 360deg);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2px));
+  mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2px));
+  opacity:.7;pointer-events:none;
+}
+
+.user-chip{margin-left:auto;text-align:right;max-width:46%;font-size:.74rem;line-height:1.3}
+.user-chip .who{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.user-chip .role{
+  display:inline-block;margin-top:2px;padding:1px 8px;border-radius:20px;
+  font-family:var(--font-display);font-size:.58rem;letter-spacing:.14em;
+  color:var(--head-accent);border:1px solid rgba(217,190,132,.45);
+}
+.sync-mini{
+  display:block;margin-top:3px;
+  font-family:var(--font-display);font-size:.56rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--head-accent);opacity:.85;
+}
+
+.container{
+  max-width:760px;margin:0 auto;
+  padding:14px calc(14px + var(--safe-r)) 24px calc(14px + var(--safe-l));
+}
+
+.page{animation:rise .28s ease both}
+.page.hidden{display:none}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* Bilah status sinkronisasi — hanya tampil saat offline / ada antrean */
+.sync-bar{
+  display:none;align-items:center;gap:8px;
+  padding:8px calc(16px + var(--safe-r)) 8px calc(16px + var(--safe-l));
+  font-size:.76rem;background:var(--warn-tint);color:var(--warn);
+  border-bottom:1px solid var(--line);
+}
+.sync-bar.show{display:flex}
+.sync-bar .ic{width:16px;height:16px;flex:0 0 auto}
+.sync-bar .spacer{margin-left:auto}
+.sync-bar button{
+  border:0;background:transparent;color:inherit;text-decoration:underline;
+  font-size:.76rem;cursor:pointer;padding:4px 6px;
+}
+/* ---------- 4. NAVIGASI BAWAH ------------------------------------------- */
+.bottom-nav{
+  position:fixed;left:0;right:0;bottom:0;z-index:95;
+  display:flex;align-items:stretch;justify-content:space-around;
+  min-height:var(--nav-h);
+  padding:6px var(--safe-r) calc(6px + var(--safe-b)) var(--safe-l);
+  background:var(--surface);
+  background:color-mix(in srgb,var(--surface) 92%,transparent);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);
+}
+.nav-item{
+  flex:1 1 0;min-width:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  min-height:var(--tap);
+  padding:6px 2px;border:0;border-radius:var(--r-sm);
+  background:transparent;color:var(--muted);
+  font-family:var(--font-display);font-size:.6rem;letter-spacing:.06em;
+  text-transform:uppercase;cursor:pointer;
+  transition:color .2s,background .2s,transform .2s;
+}
+.nav-item .ic{width:22px;height:22px;transition:transform .25s}
+.nav-item.active{color:var(--brand);background:var(--brand-tint)}
+.nav-item.active .ic{transform:translateY(-1px) scale(1.06)}
+.nav-item:active{transform:scale(.97)}

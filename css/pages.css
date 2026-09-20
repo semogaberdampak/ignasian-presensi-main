@@ -1,0 +1,108 @@
+/* css/pages.css — PAGES: modal, login, pengaturan, ikon. Urutan muat: variables > base > layout > components > pages > utilities. */
+/* ---------- 15. MODAL & TOAST ------------------------------------------- */
+.modal-overlay{
+  position:fixed;inset:0;z-index:1000;display:none;
+  align-items:flex-end;justify-content:center;
+  background:rgba(28,18,10,.6);
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);
+}
+.modal-overlay.show{display:flex}
+.modal{
+  width:100%;max-width:460px;max-height:88vh;overflow-y:auto;
+  background:var(--surface);color:var(--text);
+  border:1px solid var(--line);
+  border-radius:var(--r-lg) var(--r-lg) 0 0;
+  padding:20px 20px calc(20px + var(--safe-b));
+  box-shadow:var(--shadow-3);
+  animation:sheet .3s cubic-bezier(.2,.9,.25,1) both;
+}
+@keyframes sheet{from{transform:translateY(26px);opacity:0}to{transform:none;opacity:1}}
+.modal h3{margin-bottom:12px}
+.modal .modal-actions{margin-top:16px;display:flex;gap:8px}
+.modal .modal-actions .btn{flex:1}
+
+.toast{
+  position:fixed;left:50%;top:16px;transform:translate(-50%,-160%);
+  z-index:2000;max-width:min(92vw,440px);
+  padding:12px 18px;border-radius:var(--r-sm);
+  background:var(--surface);color:var(--text);
+  border:1px solid var(--line);border-left:4px solid var(--gold);
+  box-shadow:var(--shadow-3);
+  font-size:.84rem;line-height:1.4;
+  opacity:0;pointer-events:none;
+  transition:transform .3s cubic-bezier(.2,.9,.25,1),opacity .3s;
+}
+.toast.show{transform:translate(-50%,0);opacity:1}
+.toast.success{border-left-color:var(--ok)}
+.toast.error{border-left-color:var(--bad)}
+
+/* ---------- 16. LAYAR MASUK --------------------------------------------- */
+.login-screen{
+  min-height:100vh;min-height:100dvh;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:16px;padding:24px calc(20px + var(--safe-r)) 24px calc(20px + var(--safe-l));
+  background:var(--head-bg);
+}
+.login-screen.hidden{display:none}
+.login-card{
+  width:100%;max-width:420px;
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r-lg);padding:26px 22px;
+  box-shadow:var(--shadow-3);
+}
+.login-crest{
+  width:76px;height:76px;margin:0 auto 16px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-display);font-weight:700;font-size:1.3rem;letter-spacing:.04em;
+  color:#3B1109;background:radial-gradient(circle at 50% 38%,var(--gold-2),var(--gold) 72%);
+  box-shadow:0 0 0 1px rgba(0,0,0,.2),0 0 0 6px var(--surface-2),0 0 0 7px var(--gold);
+}
+.login-title{text-align:center;font-size:1.32rem;letter-spacing:.06em;text-transform:uppercase}
+.login-sub{
+  text-align:center;color:var(--gold);
+  font-family:var(--font-display);font-size:.66rem;letter-spacing:.2em;
+  text-transform:uppercase;margin:4px 0 22px;
+}
+.login-hint{
+  font-size:.78rem;color:var(--muted);text-align:center;line-height:1.7;
+}
+.login-foot{color:var(--head-accent);font-size:.7rem;letter-spacing:.16em;
+  font-family:var(--font-display);text-transform:uppercase}
+
+/* ---------- 17. PENGATURAN ---------------------------------------------- */
+.setting{
+  display:flex;align-items:center;gap:12px;
+  padding:14px 0;border-bottom:1px solid var(--line-soft);
+}
+.setting:last-child{border-bottom:0}
+.setting .ic{width:22px;height:22px;color:var(--gold);flex:0 0 auto}
+.setting .body{flex:1;min-width:0}
+.setting .name{font-family:var(--font-display);font-size:.82rem;color:var(--text);letter-spacing:.03em}
+.setting .desc{font-size:.78rem;color:var(--muted);margin-top:2px}
+.switch{
+  position:relative;flex:0 0 auto;
+  width:62px;height:34px;border-radius:20px;border:1.5px solid var(--line);
+  background:var(--surface-2);cursor:pointer;padding:0;
+  transition:background .25s,border-color .25s;
+}
+.switch .knob{
+  position:absolute;top:3px;left:3px;width:26px;height:26px;border-radius:50%;
+  background:var(--surface);border:1px solid var(--line);
+  box-shadow:var(--shadow-1);
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .28s cubic-bezier(.2,.9,.25,1),background .25s;
+}
+.switch .knob .ic{width:15px;height:15px;color:var(--gold)}
+.switch[aria-pressed='true']{background:var(--primary-bg);border-color:transparent}
+.switch[aria-pressed='true'] .knob{transform:translateX(28px);background:#FBF6EC;color:#3B1109}
+.switch[aria-pressed='true'] .knob .ic{color:#8A5A16}
+/* ---------- 18. IKON (sprite SVG kustom) -------------------------------- */
+.ic{
+  display:inline-block;flex:0 0 auto;
+  width:20px;height:20px;vertical-align:-.22em;
+  color:inherit;
+}
+.ic>svg{display:block;width:100%;height:100%}
+.ic-lg{width:26px;height:26px}
+.ic-sm{width:16px;height:16px}
+.ic-xl{width:52px;height:52px}

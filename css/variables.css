@@ -1,0 +1,101 @@
+/* css/variables.css — TOKENS: variabel tema terang/gelap + tipografi. Urutan muat: variables > base > layout > components > pages > utilities. */
+/* ==========================================================================
+   PRESENSI IGNASIAN — Design System
+   Bahasa rupa: liturgis / Ignatian
+   • Tipografi : Cinzel (huruf pahat Romawi) + EB Garamond (serif buku liturgi)
+   • Palet     : oxblood (merah liturgi), emas gilap, perkamen & walnut
+   • Tema      : terang (perkamen) & gelap (walnut) via [data-theme] pada <html>
+   ========================================================================== */
+
+/* ---------- 1. TOKEN DESAIN ---------------------------------------------- */
+:root{
+  color-scheme:light;
+
+  --font-display:'Cinzel','Trajan Pro','Times New Roman',Georgia,serif;
+  --font-text:'EB Garamond','Garamond','Palatino Linotype',Georgia,'Times New Roman',serif;
+
+  /* teks */
+  --text:#241B15;
+  --text-soft:#4A3B2E;
+  --muted:#7E7264;
+
+  /* permukaan */
+  --bg:#F6F1E7;
+  --bg-2:#EFE7D8;
+  --surface:#FFFDF8;
+  --surface-2:#F9F4EA;
+  --line:#E2D7C4;
+  --line-soft:#F0E9DC;
+
+  /* warna devosional */
+  --brand:#6E2632;          /* oxblood */
+  --brand-2:#8C3644;
+  --brand-tint:rgba(110,38,50,.08);
+  --gold:#B58A3C;           /* gilt */
+  --gold-2:#D9BE84;
+  --gold-tint:rgba(181,138,60,.14);
+  --ok:#3F6B4E;   --ok-tint:rgba(63,107,78,.12);
+  --warn:#A9762A; --warn-tint:rgba(169,118,42,.14);
+  --bad:#9B2B2B;  --bad-tint:rgba(155,43,43,.12);
+
+  /* komponen */
+  --primary-bg:linear-gradient(160deg,#7A2C39,#571D27);
+  --primary-ink:#FBF6EC;
+  --head-bg:linear-gradient(150deg,#6E2632,#43151D);
+  --head-ink:#F8F1E3;
+  --head-accent:#D9BE84;
+  --table-head-bg:#6E2632;
+  --table-head-ink:#F8F1E3;
+  --on-accent:#FBF6EC;
+
+  --shadow-1:0 1px 2px rgba(70,45,25,.05),0 3px 10px rgba(110,38,50,.07);
+  --shadow-2:0 8px 26px rgba(110,38,50,.12);
+  --shadow-3:0 20px 50px rgba(45,25,15,.30);
+  --focus:0 0 0 3px rgba(181,138,60,.38);
+
+  --r-xs:8px; --r-sm:11px; --r:15px; --r-lg:22px;
+  --tap:46px;
+  --nav-h:66px;
+  --safe-t:env(safe-area-inset-top,0px);
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-l:env(safe-area-inset-left,0px);
+  --safe-r:env(safe-area-inset-right,0px);
+}
+
+[data-theme='dark']{
+  color-scheme:dark;
+
+  --text:#F1E8DA;
+  --text-soft:#D9CDB8;
+  --muted:#A59881;
+
+  --bg:#130F0C;
+  --bg-2:#191412;
+  --surface:#1E1815;
+  --surface-2:#251E1A;
+  --line:#3A2E27;
+  --line-soft:#2B231F;
+
+  --brand:#E4CB93;
+  --brand-2:#C9A961;
+  --brand-tint:rgba(228,203,147,.14);
+  --gold:#C9A961;
+  --gold-2:#E7D3A5;
+  --gold-tint:rgba(201,169,97,.16);
+  --ok:#7FB08E;   --ok-tint:rgba(127,176,142,.14);
+  --warn:#D9A75C; --warn-tint:rgba(217,167,92,.15);
+  --bad:#D98383;  --bad-tint:rgba(217,131,131,.14);
+
+  --primary-bg:linear-gradient(160deg,#D8B772,#A9822F);
+  --primary-ink:#241A08;
+  --head-bg:linear-gradient(150deg,#2A1E1A,#110C0B);
+  --head-ink:#F4EADA;
+  --head-accent:#DCC68D;
+  --table-head-bg:#2F2420;
+  --table-head-ink:#EFE3CE;
+  --on-accent:#241A08;
+
+  --shadow-1:0 1px 2px rgba(0,0,0,.4),0 3px 12px rgba(0,0,0,.35);
+  --shadow-2:0 10px 28px rgba(0,0,0,.45);
+  --shadow-3:0 22px 54px rgba(0,0,0,.6);
+  --focus:0 0 0 3px rgba(201,169,97,.38);

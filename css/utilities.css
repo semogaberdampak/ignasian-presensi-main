@@ -1,0 +1,98 @@
+/* css/utilities.css — UTILITIES: helper + responsif + cetak. Urutan muat: variables > base > layout > components > pages > utilities. */
+/* ---------- 19. UTILITAS ------------------------------------------------- */
+.hidden{display:none !important}
+.muted{color:var(--muted)}
+.center{text-align:center}
+.right{text-align:right}
+.nowrap{white-space:nowrap}
+.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.small{font-size:.82rem}
+.tiny{font-size:.72rem}
+.lead{font-size:.95rem;line-height:1.65}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.row-tight{display:flex;align-items:center;gap:6px}
+.spacer{margin-left:auto}
+.mt-0{margin-top:0}.mt-6{margin-top:6px}.mt-10{margin-top:10px}
+.mt-14{margin-top:14px}.mt-20{margin-top:20px}
+.mb-0{margin-bottom:0}.mb-8{margin-bottom:8px}.mb-14{margin-bottom:14px}
+.stack>*+*{margin-top:10px}
+.dash-title{
+  font-family:var(--font-display);font-size:.74rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--muted);margin-bottom:8px;
+}
+.gps-info{font-size:.8rem;color:var(--muted);margin-top:10px}
+.scroll-y{overflow-y:auto;max-height:min(60vh,460px)}
+.steps{
+  padding-left:22px;line-height:1.85;font-size:.9rem;
+  font-family:var(--font-text);
+}
+.steps li+li{margin-top:5px}
+.steps li::marker{color:var(--gold);font-family:var(--font-display)}
+
+/* Tabel menumpuk di layar kecil (label dari atribut data-label) */
+@media (max-width:620px){
+  .table-wrap{border:0;background:transparent;overflow:visible}
+  table.responsive{font-size:.9rem}
+  table.responsive thead{
+    position:absolute;width:1px;height:1px;overflow:hidden;
+    clip:rect(0 0 0 0);white-space:nowrap;
+  }
+  table.responsive,table.responsive tbody,table.responsive tr,table.responsive td{display:block;width:100%}
+  table.responsive tr{
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r-sm);padding:10px 12px;margin-bottom:9px;
+    box-shadow:var(--shadow-1);
+  }
+  table.responsive td{
+    border:0;padding:4px 0;background:transparent !important;
+  }
+  table.responsive td[data-label]::before{
+    content:attr(data-label);display:block;
+    font-family:var(--font-display);font-size:.56rem;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:1px;
+  }
+}
+
+/* ---------- 20. PENYESUAIAN LAYAR --------------------------------------- */
+@media (min-width:621px){
+  body{padding-bottom:24px}
+  #mainApp{display:flex;flex-direction:column}
+  .app-header{order:-3}
+  .sync-bar{order:-2}
+  .bottom-nav{
+    order:-1;position:sticky;top:calc(68px + var(--safe-t));bottom:auto;z-index:80;
+    border-top:0;border-bottom:1px solid var(--line);
+    border-radius:0;box-shadow:var(--shadow-1);
+    min-height:0;
+  }
+  .nav-item{flex-direction:row;gap:8px;font-size:.68rem;min-height:44px}
+  .container{order:0;width:100%}
+  .stats-grid.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .map{height:300px}
+  .modal-overlay{align-items:center;padding:20px}
+  .modal{border-radius:var(--r-lg);max-height:84vh}
+}
+@media (max-width:380px){
+  :root{--nav-h:62px}
+  body{font-size:16px}
+  .app-header h1{font-size:.9rem}
+  .card{padding:14px}
+  .stat .value{font-size:1.45rem}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;
+  }
+}
+@media print{
+  .bottom-nav,.app-header,.toast,.sync-bar{display:none !important}
+  body{background:#fff}
+  .card{box-shadow:none;border-color:#ccc}
+}
+
+/* Peta disesuaikan agar nyaman di tema gelap */
+[data-theme='dark'] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.86) contrast(.92)}
+[data-theme='dark'] .leaflet-control-attribution{background:rgba(20,15,12,.8);color:#A59881}
+[data-theme='dark'] .leaflet-control-attribution a{color:#C9A961}
