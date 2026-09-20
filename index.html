@@ -143,7 +143,8 @@
             divalidasi otomatis, lalu disimpan di perangkat ini.
           </p>
           <div id="scannerContainer" class="scan-frame hidden">
-            <video id="scanner-video" autoplay playsinline muted></video>
+            <div id="qr-reader"></div>
+            <p id="scanHint" class="small muted center mt-8">Menyiapkan kamera…</p>
           </div>
           <button class="btn btn-primary" id="btnStartScan" type="button" onclick="startScanner()">
             <span class="ic" data-ic="viewfinder"></span>Buka Kamera &amp; Pindai
@@ -151,6 +152,12 @@
           <button class="btn btn-danger hidden" id="btnStopScan" type="button" onclick="stopScanner()">
             <span class="ic" data-ic="scrap"></span>Batalkan
           </button>
+          <div class="divider"></div>
+          <p class="small muted center">Kamera tidak terbuka? Unggah foto QR sebagai alternatif.</p>
+          <label class="btn btn-outline" for="qrFileInput" style="width:100%;justify-content:center">
+            <span class="ic" data-ic="matrix"></span>Pindai dari Foto
+          </label>
+          <input type="file" id="qrFileInput" accept="image/*" capture="environment" class="hidden" onchange="scanFromFile(this)" />
         </div>
       </div>
 

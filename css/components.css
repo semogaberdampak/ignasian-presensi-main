@@ -216,8 +216,9 @@ tbody tr:nth-child(even) td{background:var(--surface-2)}
   border-radius:var(--r-sm);padding:18px;text-align:center;
 }
 .qr-box canvas,.qr-box img{margin:0 auto;display:block;max-width:100%;background:#fff;border-radius:6px}
-.scan-frame{position:relative;border-radius:var(--r-sm);overflow:hidden}
-#scanner-video{display:block;width:100%;max-height:320px;background:#000}
+.scan-frame{position:relative;border-radius:var(--r-sm);overflow:hidden;background:#000;min-height:240px}
+#qr-reader{width:100%;min-height:240px;background:#000;border:none}
+#qr-reader video{display:block;width:100% !important;max-height:340px;object-fit:cover}
 .scan-frame::before{
   content:'';position:absolute;inset:18% 12%;
   border:2px solid var(--gold);border-radius:14px;

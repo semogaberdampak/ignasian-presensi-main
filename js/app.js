@@ -940,39 +940,142 @@ function submitManual() {
 }
 
 /* ---------- 17. PEMINDAI QR -------------------------------------------- */
+/* html5-qrcode butuh <div> (bukan <video>) sebagai wadah — ia membuat
+   <video> + <canvas> sendiri. Memakai id <video> sebagai wadah membuat
+   kamera tidak pernah tampil (layar hitam seperti laporan). */
+function scanErrorMessage(e) {
+  const name = (e && e.name) || '';
+  const msg = String((e && (e.message || e)) || '');
+  if (name === 'NotAllowedError' || /permission|denied|not allowed/i.test(msg))
+    return 'Izin kamera ditolak peramban. Ketuk ikon kamera/gembok di address bar, izinkan kamera, lalu muat ulang & coba lagi. Kamera hanya jalan di HTTPS/localhost.';
+  if (name === 'NotFoundError' || /no camera|not found/i.test(msg))
+    return 'Tidak ada kamera yang ditemukan di peranti ini.';
+  if (name === 'NotReadableError' || /in use|busy|track/i.test(msg))
+    return 'Kamera sedang dipakai aplikasi lain. Tutup aplikasi itu lalu coba lagi.';
+  return 'Kamera tidak dapat diakses: ' + (msg || name || e);
+}
+
+function scanHint(txt) {
+  const h = $('scanHint');
+  if (h) h.textContent = txt;
+}
+
+function stopScanTracks() {
+  try {
+    const r = $('qr-reader');
+    if (r) r.querySelectorAll('video').forEach(v => {
+      try {
+        const s = v.srcObject;
+        if (s && s.getTracks) s.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+        v.srcObject = null;
+      } catch (e) {}
+    });
+  } catch (e) {}
+}
+
+async function ensureScannerStopped() {
+  if (state.scanner) {
+    try { await state.scanner.stop(); } catch (e) {}
+    try { await state.scanner.clear(); } catch (e) {}
+    state.scanner = null;
+  }
+  stopScanTracks();
+  const r = $('qr-reader');
+  if (r) r.innerHTML = '';
+}
+
 async function startScanner() {
   if (typeof Html5Qrcode === 'undefined') {
     toast('Pemindai QR belum termuat (peranti luring). Sambungkan ke internet sekali untuk menyimpannya.', 'error');
     return;
   }
+  if (!window.isSecureContext) {
+    toast('Buka aplikasi via HTTPS atau localhost — kamera diblokir pada koneksi tidak aman.', 'error');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('Peramban ini tidak mendukung kamera. Gunakan Chrome/Edge/Safari terbaru atau "Pindai dari Foto".', 'error');
+    return;
+  }
   $('scannerContainer').classList.remove('hidden');
   $('btnStartScan').classList.add('hidden');
   $('btnStopScan').classList.remove('hidden');
-
+  scanHint('Meminta izin kamera…');
+  await ensureScannerStopped();
+  const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+  const onFail = () => {};
   try {
-    state.scanner = new Html5Qrcode('scanner-video');
-    await state.scanner.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 250, height: 250 } },
-      onScanSuccess,
-      () => { /* abaikan kerangka tanpa kode */ }
-    );
-    addLog('START_SCAN', {});
+    const devices = await Html5Qrcode.getCameras().catch(() => []);
+    const makers = [
+      () => {
+        state.scanner = new Html5Qrcode('qr-reader');
+        return state.scanner.start({ facingMode: 'environment' }, config, onScanSuccess, onFail);
+      },
+      () => {
+        state.scanner = new Html5Qrcode('qr-reader');
+        return state.scanner.start({ facingMode: 'user' }, config, onScanSuccess, onFail);
+      }
+    ];
+    (devices || []).forEach(d => {
+      if (d && d.id) makers.push(() => {
+        state.scanner = new Html5Qrcode('qr-reader');
+        return state.scanner.start(d.id, config, onScanSuccess, onFail);
+      });
+    });
+    let lastErr = null;
+    for (const run of makers) {
+      try {
+        await ensureScannerStopped();
+        scanHint('Membuka kamera…');
+        await run();
+        scanHint('Arahkan kamera ke kode QR venue…');
+        addLog('START_SCAN', {});
+        return;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('kamera tidak tersedia');
   } catch (e) {
-    toast('Kamera tidak dapat diakses: ' + e.message, 'error');
-    stopScanner();
+    toast(scanErrorMessage(e), 'error');
+    try { addLog('SCAN_ERROR', { error: String((e && e.message) || e) }); } catch (e2) {}
+    await stopScanner();
   }
 }
 
 async function stopScanner() {
-  if (state.scanner) {
-    try { await state.scanner.stop(); } catch (e) { /* sudah berhenti */ }
-    state.scanner = null;
-  }
+  await ensureScannerStopped();
+  scanHint('Menyiapkan kamera…');
   if ($('scannerContainer')) {
     $('scannerContainer').classList.add('hidden');
     $('btnStartScan').classList.remove('hidden');
     $('btnStopScan').classList.add('hidden');
+  }
+}
+
+async function scanFromFile(input) {
+  if (!input || !input.files || !input.files.length) return;
+  if (typeof Html5Qrcode === 'undefined') {
+    toast('Pemindai QR belum termuat (peranti luring).', 'error');
+    input.value = '';
+    return;
+  }
+  const file = input.files[0];
+  try {
+    toast('Membaca foto QR…', 'info');
+    let tmp = document.getElementById('qr-file-reader');
+    if (!tmp) {
+      tmp = document.createElement('div');
+      tmp.id = 'qr-file-reader';
+      tmp.style.display = 'none';
+      document.body.appendChild(tmp);
+    }
+    const reader = new Html5Qrcode('qr-file-reader');
+    const decoded = await reader.scanFile(file, true);
+    try { await reader.clear(); } catch (e) {}
+    input.value = '';
+    await onScanSuccess(decoded);
+  } catch (e) {
+    input.value = '';
+    toast('Foto tidak mengandung QR yang valid.', 'error');
   }
 }
 
