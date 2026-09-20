@@ -1385,7 +1385,7 @@ function generateQR() {
 
   $('qrResult').innerHTML = `
     <div class="qr-box">
-      <div id="qrCanvas"></div>
+      <div id="qrCanvas" style="min-height:280px;display:flex;align-items:center;justify-content:center"></div>
       <h3 class="mt-14">${esc(j.nama)}</h3>
       <p class="small muted">${esc(j.venue)}<br>${fmtDateTime(j.tanggal)} · radius ${esc(j.radius)} m</p>
       <div class="btn-row mt-14">
@@ -1395,61 +1395,109 @@ function generateQR() {
     </div>`;
 
   const box = $('qrCanvas');
-  box.innerHTML = '';
-  try {
-    /* Pustaka qrcodejs (davidshimjs): new QRCode(el, {text,width,height,...}) */
-    if (typeof QRCode === 'function' && !QRCode.toCanvas) {
+  box.innerHTML = '<p class="small muted">Membuat QR…</p>';
+
+  /* Cabang 1 — pustaka node-qrcode (soldair): QRCode.toCanvas(canvas, text, ...) */
+  if (QRCode && typeof QRCode.toCanvas === 'function') {
+    const holder = document.createElement('canvas');
+    try {
+      QRCode.toCanvas(holder, qrData, {
+        width: 280, margin: 2,
+        color: { dark: '#6E2632', light: '#FAF7F2' }
+      }, (err, canvas) => {
+        if (err || !canvas) { toast('QR gagal dibuat', 'error'); box.innerHTML = ''; return; }
+        canvas.id = 'qrFinalCanvas';
+        canvas.style.width = '280px';
+        canvas.style.height = '280px';
+        box.innerHTML = '';
+        box.appendChild(canvas);
+      });
+    } catch (e) {
+      box.innerHTML = '';
+      toast('QR gagal dibuat: ' + e.message, 'error');
+    }
+    return;
+  }
+
+  /* Cabang 2 — pustaka qrcodejs (davidshimjs, yang dipakai di index.html):
+     new QRCode(el, {text,width,height,...}) — TIDAK punya .toCanvas */
+  if (typeof QRCode === 'function') {
+    try {
+      box.innerHTML = '';
       new QRCode(box, {
         text: qrData,
         width: 280, height: 280,
         colorDark: '#6E2632', colorLight: '#FAF7F2',
         correctLevel: (QRCode.CorrectLevel ? QRCode.CorrectLevel.M : 0)
       });
-      const img = box.querySelector('img');
-      const table = box.querySelector('table');
-      if (img) { img.id = 'qrFinalImg'; img.style.width = '280px'; img.style.height = '280px'; }
-      if (table) table.id = 'qrFinalCanvas';
-      return;
+      /* qrcodejs membuat <canvas> + <img> (async). Tandai keduanya agar
+         downloadQR()/printQR() bisa memakai salah satu. */
+      const tagCanvas = box.querySelector('canvas');
+      if (tagCanvas) {
+        tagCanvas.id = 'qrFinalCanvas';
+        tagCanvas.style.width = '280px';
+        tagCanvas.style.height = '280px';
+      }
+      const tagImg = box.querySelector('img');
+      if (tagImg) {
+        tagImg.id = 'qrFinalImg';
+        tagImg.style.width = '280px';
+        tagImg.style.height = '280px';
+        /* Sebagian peramban menunda pengisian src — tunggu hingga terisi. */
+        if (!tagImg.src && tagCanvas && typeof tagCanvas.toDataURL === 'function') {
+          try { tagImg.src = tagCanvas.toDataURL('image/png'); } catch (e) { /* abaikan */ }
+        }
+      }
+      /* Fallback tabel (mode lama qrcodejs tanpa canvas): beri id agar
+         downloadQR bisa merendernya ke canvas. */
+      const tagTable = box.querySelector('table');
+      if (!tagCanvas && !tagImg && tagTable) tagTable.id = 'qrFallbackTable';
+      if (!box.children.length) throw new Error('pustaka QR tidak merender apa pun');
+    } catch (e) {
+      box.innerHTML = '';
+      toast('QR gagal dibuat: ' + e.message, 'error');
     }
-  } catch (e) {
-    toast('QR gagal dibuat: ' + e.message, 'error');
     return;
   }
 
-  /* Pustaka node-qrcode (soldair): QRCode.toCanvas(canvas, text, opts, cb) */
-  const holder = document.createElement('canvas');
-  try {
-    QRCode.toCanvas(holder, qrData, {
-      width: 280, margin: 2,
-      color: { dark: '#6E2632', light: '#FAF7F2' }
-    }, (err, canvas) => {
-      if (err) { toast('QR gagal dibuat', 'error'); return; }
-      canvas.id = 'qrFinalCanvas';
-      box.innerHTML = '';
-      box.appendChild(canvas);
-    });
-  } catch (e) {
-    toast('QR gagal dibuat: ' + e.message, 'error');
+  box.innerHTML = '';
+  toast('Pustaka QR tidak dikenali', 'error');
+}
+
+function qrImageSrc() {
+  const canvas = $('qrFinalCanvas');
+  if (canvas && canvas.tagName === 'CANVAS' && typeof canvas.toDataURL === 'function') {
+    try { return canvas.toDataURL('image/png'); } catch (e) { /* lanjut ke img */ }
   }
+  const img = $('qrFinalImg');
+  if (img && img.src) return img.src;
+  /* qrcodejs kadang hanya merender <img> tanpa id — ambil yang pertama. */
+  const box = $('qrCanvas');
+  if (box) {
+    const anyImg = box.querySelector('img');
+    if (anyImg && anyImg.src) return anyImg.src;
+    const anyCanvas = box.querySelector('canvas');
+    if (anyCanvas && typeof anyCanvas.toDataURL === 'function') {
+      try { return anyCanvas.toDataURL('image/png'); } catch (e) { /* abaikan */ }
+    }
+  }
+  return null;
 }
 
 function downloadQR(nama) {
-  const canvas = $('qrFinalCanvas');
-  const img = $('qrFinalImg');
-  const src = canvas ? canvas.toDataURL()
-    : (img ? img.src : null);
+  const src = qrImageSrc();
   if (!src) { toast('Belum ada QR untuk diunduh', 'error'); return; }
   const a = document.createElement('a');
-  a.download = 'QR_' + String(nama).replace(/\s+/g, '_') + '.png';
+  a.download = 'QR_' + String(nama || 'presensi').replace(/\s+/g, '_') + '.png';
   a.href = src;
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   toast('QR diunduh', 'success');
 }
 
 function printQR() {
-  const canvas = $('qrFinalCanvas');
-  const img = $('qrFinalImg');
-  const src = canvas ? canvas.toDataURL() : (img ? img.src : null);
+  const src = qrImageSrc();
   if (!src) { toast('Belum ada QR untuk dicetak', 'error'); return; }
   const w = window.open('', '', 'width=420,height=560');
   if (!w) { toast('Jendela cetak diblokir peramban', 'error'); return; }
