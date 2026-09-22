@@ -28,18 +28,45 @@
 <link rel="stylesheet" href="css/utilities.css" />
 
 <script>
-/* Tema diterapkan sebelum cat pertama agar tidak berkedip */
+/* Tema awal mengikuti preferensi sistem agar tidak berkedip.
+   Tema yang tersimpan di DATABASE (IndexedDB) diterapkan segera
+   setelah database siap — lihat js/db.js + js/app.js init(). */
 (function () {
   try {
-    var t = localStorage.getItem('ign_theme');
-    if (t !== 'dark' && t !== 'light') {
-      t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-    }
+    var t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
     var root = document.documentElement;
     root.setAttribute('data-theme', t);
     var m = document.querySelector('meta[name="theme-color"]');
     if (m) m.setAttribute('content', t === 'dark' ? '#130F0C' : '#6E2632');
   } catch (e) { /* abaikan */ }
+})();
+</script>
+<script>
+/* Terapkan tema tersimpan dari database IndexedDB sedini mungkin (tanpa localStorage) */
+(function () {
+  try {
+    var req = indexedDB.open('ign_presensi_db', 1);
+    req.onupgradeneeded = function () {
+      var db = req.result;
+      ['users','jadwal','presensi','logs','outbox','tombstones','kv'].forEach(function (s) {
+        if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+      });
+    };
+    req.onsuccess = function () {
+      try {
+        var tx = req.result.transaction('kv', 'readonly');
+        var g = tx.objectStore('kv').get('theme');
+        g.onsuccess = function () {
+          var t = g.result;
+          if (t === 'dark' || t === 'light') {
+            document.documentElement.setAttribute('data-theme', t);
+            var m = document.querySelector('meta[name="theme-color"]');
+            if (m) m.setAttribute('content', t === 'dark' ? '#130F0C' : '#6E2632');
+          }
+        };
+      } catch (e) { /* abaikan */ }
+    };
+  } catch (e) { /* IndexedDB tidak tersedia — pakai preferensi sistem */ }
 })();
 </script>
 </head>
@@ -94,13 +121,9 @@
     </div>
   </header>
 
-  <!-- Bilah status luring/sinkron -->
-  <div class="sync-bar" id="syncBar" role="status">
-    <span class="ic ic-sm" data-ic="sync"></span>
-    <span id="syncBarText">Menyiapkan penyimpanan luring…</span>
-    <span class="spacer"></span>
-    <button type="button" id="syncBarBtn" onclick="syncNow(true)">Sinkronkan</button>
-  </div>
+  <!-- Sinkronisasi berjalan sepenuhnya di LATAR BELAKANG (tanpa bilah tampilan)
+       agar tata letak halaman tidak berubah tinggi. Status tetap dapat dilihat
+       di menu Pengaturan. -->
 
   <div class="container">
 
@@ -413,8 +436,8 @@
         <div class="divider"></div>
         <h3>Bekerja secara luring</h3>
         <ul class="steps">
-          <li>Semua data tersimpan lebih dahulu di peranti ini.</li>
-          <li>Perubahan dikirim otomatis saat peranti kembali daring (juga lewat bilah kuning di atas).</li>
+          <li>Semua data tersimpan lebih dahulu di database peranti ini (IndexedDB).</li>
+          <li>Perubahan dikirim otomatis di latar belakang saat peranti kembali daring.</li>
           <li>Data dari server digabung, tidak menimpa perubahan lokal yang belum terkirim.</li>
           <li>Simpan aplikasi ke layar utama agar dapat dibuka tanpa sambungan.</li>
         </ul>
@@ -626,7 +649,8 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
-<!-- Kode aplikasi: ikon kustom lalu inti aplikasi -->
+<!-- Database aplikasi (IndexedDB) lalu ikon kustom dan inti aplikasi -->
+<script src="js/db.js"></script>
 <script src="js/icons.js"></script>
 <script src="js/app.js"></script>
 </body>

@@ -59,7 +59,6 @@
   body{padding-bottom:24px}
   #mainApp{display:flex;flex-direction:column}
   .app-header{order:-3}
-  .sync-bar{order:-2}
   .bottom-nav{
     order:-1;position:sticky;top:calc(68px + var(--safe-t));bottom:auto;z-index:80;
     border-top:0;border-bottom:1px solid var(--line);
@@ -87,7 +86,7 @@
   }
 }
 @media print{
-  .bottom-nav,.app-header,.toast,.sync-bar{display:none !important}
+  .bottom-nav,.app-header,.toast{display:none !important}
   body{background:#fff}
   .card{box-shadow:none;border-color:#ccc}
 }

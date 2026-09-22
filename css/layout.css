@@ -66,20 +66,6 @@
 .page.hidden{display:none}
 @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
-/* Bilah status sinkronisasi — hanya tampil saat offline / ada antrean */
-.sync-bar{
-  display:none;align-items:center;gap:8px;
-  padding:8px calc(16px + var(--safe-r)) 8px calc(16px + var(--safe-l));
-  font-size:.76rem;background:var(--warn-tint);color:var(--warn);
-  border-bottom:1px solid var(--line);
-}
-.sync-bar.show{display:flex}
-.sync-bar .ic{width:16px;height:16px;flex:0 0 auto}
-.sync-bar .spacer{margin-left:auto}
-.sync-bar button{
-  border:0;background:transparent;color:inherit;text-decoration:underline;
-  font-size:.76rem;cursor:pointer;padding:4px 6px;
-}
 /* ---------- 4. NAVIGASI BAWAH ------------------------------------------- */
 .bottom-nav{
   position:fixed;left:0;right:0;bottom:0;z-index:95;

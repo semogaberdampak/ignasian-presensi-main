@@ -8,7 +8,7 @@
    • CDN luar  : stale-while-revalidate (peta, font, pustaka QR).
    • Data ke Google Apps Script tidak pernah di-cache (selalu daring).
    ========================================================================== */
-const VERSION = 'v9';
+const VERSION = 'v10';
 const SHELL_CACHE = 'ign-shell-' + VERSION;
 const RUNTIME_CACHE = 'ign-runtime-' + VERSION;
 
@@ -22,6 +22,7 @@ const SHELL = [
   './css/components.css',
   './css/pages.css',
   './css/utilities.css',
+  './js/db.js',
   './js/icons.js',
   './js/app.js',
   './icons/icon-192.png',

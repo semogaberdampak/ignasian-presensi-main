@@ -14,10 +14,10 @@
   --font-display:'Cinzel','Trajan Pro','Times New Roman',Georgia,serif;
   --font-text:'EB Garamond','Garamond','Palatino Linotype',Georgia,'Times New Roman',serif;
 
-  /* teks */
-  --text:#241B15;
-  --text-soft:#4A3B2E;
-  --muted:#7E7264;
+  /* teks — kontras cukup agar nyaman dibaca di mode terang (WCAG AA) */
+  --text:#1E150F;
+  --text-soft:#3A2E22;
+  --muted:#5E5344;
 
   /* permukaan */
   --bg:#F6F1E7;

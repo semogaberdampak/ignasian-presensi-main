@@ -108,15 +108,14 @@ function notify(msg, type) { toast(msg, type); }
 
 /* ---------- 4. TEMA (TERANG / GELAP) ------------------------------------- */
 const THEME_COLOR = { light: '#6E2632', dark: '#130F0C' };
+let _themeCache = null; /* cache tema dari database (IndexedDB) */
 
 function systemTheme() {
   return (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
 }
 function storedTheme() {
-  try {
-    const v = localStorage.getItem(STORE_KEYS.theme);
-    return (v === 'dark' || v === 'light') ? v : null;
-  } catch (e) { return null; }
+  /* Tema kini dibaca dari database (IndexedDB); cache memori untuk kecepatan */
+  return _themeCache;
 }
 function currentTheme() { return storedTheme() || systemTheme(); }
 
@@ -124,7 +123,10 @@ function currentTheme() { return storedTheme() || systemTheme(); }
 function applyTheme(mode, persist) {
   const m = (mode === 'dark') ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', m);
-  if (persist) { try { localStorage.setItem(STORE_KEYS.theme, m); } catch (e) { /* luring */ } }
+  if (persist) {
+    _themeCache = m;
+    kvSet('theme', m); /* disimpan di database, bukan localStorage */
+  }
 
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', THEME_COLOR[m]);
@@ -157,28 +159,22 @@ function watchSystemTheme() {
   if (mq.addEventListener) mq.addEventListener('change', handler);
   else if (mq.addListener) mq.addListener(handler);
 }
-/* ---------- 5. PENYIMPANAN PERANGKAT (OFFLINE FIRST) --------------------- */
-function readJson(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    const val = JSON.parse(raw);
-    return (val === null || val === undefined) ? fallback : val;
-  } catch (e) { return fallback; }
-}
+/* ---------- 5. PENYIMPANAN DATABASE (IndexedDB, OFFLINE FIRST) ------------
+   Semua data (pengguna, jadwal, presensi, log, antrean, sesi, tema)
+   disimpan di IndexedDB — basis data peramban — bukan localStorage. */
 
 function saveLocal() {
   try {
-    localStorage.setItem(STORE_KEYS.users, JSON.stringify(state.users));
-    localStorage.setItem(STORE_KEYS.jadwal, JSON.stringify(state.jadwal));
-    localStorage.setItem(STORE_KEYS.presensi, JSON.stringify(state.presensi));
-    localStorage.setItem(STORE_KEYS.logs, JSON.stringify(state.logs));
-    localStorage.setItem(STORE_KEYS.outbox, JSON.stringify(state.outbox));
-    localStorage.setItem(STORE_KEYS.tomb, JSON.stringify(state.tombstones));
-    localStorage.setItem(STORE_KEYS.meta, JSON.stringify(state.meta));
+    dbReplaceAll('users', state.users, r => r.id);
+    dbReplaceAll('jadwal', state.jadwal, r => r.id);
+    dbReplaceAll('presensi', state.presensi, r => r.id);
+    dbReplaceAll('logs', state.logs, r => r.id);
+    dbReplaceAll('outbox', state.outbox, r => r.opId);
+    dbReplaceAll('tombstones', state.tombstones, (r, i) => r.c + ':' + r.id + ':' + i);
+    kvSet('meta', state.meta);
     return true;
   } catch (e) {
-    toast('Penyimpanan perangkat penuh — mohon sinkronkan lalu bersihkan', 'error');
+    toast('Penyimpanan database penuh — mohon sinkronkan lalu bersihkan', 'error');
     return false;
   }
 }
@@ -195,14 +191,16 @@ function stampAll(list, fallbackField) {
   return list || [];
 }
 
-function loadLocal() {
-  state.users = stampAll(readJson(STORE_KEYS.users, []), 'createdAt');
-  state.jadwal = stampAll(readJson(STORE_KEYS.jadwal, []), 'createdAt');
-  state.presensi = stampAll(readJson(STORE_KEYS.presensi, []), 'timestamp');
-  state.logs = stampAll(readJson(STORE_KEYS.logs, []), 'timestamp');
-  state.outbox = readJson(STORE_KEYS.outbox, []);
-  state.tombstones = readJson(STORE_KEYS.tomb, []);
-  state.meta = Object.assign({ lastSync: null }, readJson(STORE_KEYS.meta, {}));
+async function loadLocal() {
+  await migrateLegacyKV();
+  await dbLoadAll();
+  state.users = stampAll(dbRows('users'), 'createdAt');
+  state.jadwal = stampAll(dbRows('jadwal'), 'createdAt');
+  state.presensi = stampAll(dbRows('presensi'), 'timestamp');
+  state.logs = stampAll(dbRows('logs'), 'timestamp');
+  state.outbox = dbRows('outbox');
+  state.tombstones = dbRows('tombstones');
+  state.meta = Object.assign({ lastSync: null }, await kvGet('meta', {}));
 }
 
 /* ---------- 6. ANTREAN SINKRON (OUTBOX) --------------------------------- */
@@ -389,41 +387,18 @@ function syncNow(manual) {
   })();
 }
 
-/* ---------- 8. INDIKATOR STATUS SINKRON --------------------------------- */
+/* ---------- 8. INDIKATOR STATUS SINKRON (LATAR BELAKANG) ------------------
+   Sinkronisasi tidak lagi menampilkan bilah pada halaman agar tata letak
+   tidak berubah tinggi. Status hanya ditampilkan di menu Pengaturan. */
 function updateSyncUI(stateOverride) {
-  const pend = state.outbox.length;
-  let msg = null;
-
-  /* stateOverride dipakai agar kegagalan server tidak dikira luring —
-     data lokal tetap aman di perangkat. */
-  if (!apiReady()) msg = 'Mode mandiri · seluruh data tersimpan di perangkat ini';
-  else if (!isOnline()) msg = 'Luring · ' + (pend ? pend + ' data menunggu sinkron' : 'data tersimpan lokal, sinkron otomatis saat daring');
-  else if (stateOverride === 'error') msg = state.apiHint || ('Sinkron gagal · data tetap aman di perangkat ini' + (pend ? ' · ' + pend + ' antre' : ''));
-  else if (state.syncing) msg = 'Menyinkronkan data…';
-  else if (pend) msg = pend + ' data menunggu sinkron';
-
-  const bar = $('syncBar');
-  if (bar) bar.classList.toggle('show', !!msg);
-  const text = $('syncBarText');
-  if (text && msg) text.textContent = msg;
-  const btn = $('syncBarBtn');
-  if (btn) btn.classList.toggle('hidden', !apiReady() || !isOnline());
-  const chip = $('userSync');
-  if (chip) chip.textContent = !apiReady() ? 'Mandiri' : (!isOnline() ? 'Luring' : (state.syncing ? 'Sinkron…' : (pend ? pend + ' antre' : (state.meta.lastSync ? 'Sinkron' : 'Daring'))));
-
   if ($('page-pengaturan') && !$('page-pengaturan').classList.contains('hidden')) renderSettingsSync();
 }
 
-/* Pemicu sinkron: kembali daring, kembali ke aplikasi, berkala, dan dari SW */
+/* Pemicu sinkron: kembali daring, kembali ke aplikasi, berkala, dan dari SW.
+   Semua berjalan senyap di latar belakang — tanpa toast & tanpa bilah. */
 function setupConnectivity() {
-  window.addEventListener('online', () => {
-    toast('Kembali daring — menyinkronkan…', 'success');
-    syncNow(false);
-  });
-  window.addEventListener('offline', () => {
-    toast('Mode luring aktif — presensi tetap tersimpan di perangkat', 'info');
-    updateSyncUI();
-  });
+  window.addEventListener('online', () => syncNow(false));
+  window.addEventListener('offline', () => updateSyncUI());
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.currentUser) syncNow(false);
   });
@@ -512,7 +487,7 @@ async function doLogin() {
     if (!user) { toast('Username/password salah atau akun nonaktif', 'error'); return; }
 
     state.currentUser = user;
-    try { localStorage.setItem(STORE_KEYS.session, JSON.stringify({ id: user.id, t: Date.now() })); } catch (e) { /* abaikan */ }
+    kvSet('session', { id: user.id, t: Date.now() }); /* sesi disimpan di database */
     addLog('LOGIN', { username: user.username });
     toast('Selamat datang, ' + user.nama + '!', 'success');
     showMainApp();
@@ -524,7 +499,7 @@ async function doLogin() {
 function doLogout() {
   if (state.currentUser) addLog('LOGOUT', { username: state.currentUser.username });
   state.currentUser = null;
-  try { localStorage.removeItem(STORE_KEYS.session); } catch (e) { /* abaikan */ }
+  kvSet('session', null); /* hapus sesi dari database */
   stopScanner();
   $('mainApp').classList.add('hidden');
   $('loginScreen').classList.remove('hidden');
@@ -561,8 +536,8 @@ async function seedDefaultUsers() {
   saveLocal();
 }
 
-function checkSession() {
-  const s = readJson(STORE_KEYS.session, null);
+async function checkSession() {
+  const s = await kvGet('session', null);
   if (!s || !s.id) return false;
   const user = state.users.find(u => u.id === s.id && u.status === 'aktif');
   if (!user) return false;
@@ -641,14 +616,13 @@ function showMainApp() {
   showPage('home');
 }
 
-/* Kartu pengguna di kepala aplikasi (memuat indikator sinkron) */
+/* Kartu pengguna di kepala aplikasi (tanpa indikator sinkron — sinkron berjalan di latar) */
 function renderUserChip() {
   const u = state.currentUser;
   if (!u || !$('userChip')) return;
   $('userChip').innerHTML =
     '<span class="who">' + esc(u.nama) + '</span>' +
-    '<span class="role">' + esc(roleName(u.role)) + '</span>' +
-    '<span class="sync-mini" id="userSync">Sinkron</span>';
+    '<span class="role">' + esc(roleName(u.role)) + '</span>';
 }
 
 /* ---------- 13. HELPER TAMPILAN ----------------------------------------- */
@@ -1903,8 +1877,8 @@ function renderSettingsSync() {
   if (btn) btn.disabled = !apiReady() || !on || state.syncing;
 }
 
-function reloadLocalData() {
-  loadLocal();
+async function reloadLocalData() {
+  await loadLocal();
   if (state.currentUser) {
     const fresh = state.users.find(u => u.id === state.currentUser.id);
     if (fresh) state.currentUser = fresh;
@@ -1960,10 +1934,17 @@ function bindEvents() {
 
 async function init() {
   if (window.Icon) { Icon.mount(); Icon.hydrate(); }
-  applyTheme(currentTheme(), false);
+
+  /* Muat database lebih dahulu: tema, sesi, dan seluruh data koleksi */
+  try {
+    await openDB();
+    await migrateLegacyKV();
+    _themeCache = await kvGet('theme', null);
+  } catch (e) { console.warn('Database tidak tersedia', e); }
+  applyTheme(_themeCache || systemTheme(), false);
   watchSystemTheme();
 
-  loadLocal();
+  await loadLocal();
   if (!state.users.length) await seedDefaultUsers();
 
   bindEvents();
@@ -1971,7 +1952,7 @@ async function init() {
   updateSyncUI();
   setupConnectivity();
 
-  if (checkSession()) showMainApp();
+  if (await checkSession()) showMainApp();
 
   /* Sinkron di latar: kirim antrean lebih dahulu, lalu tarik data baru.
      Tidak menahan tampilan — aplikasi sudah dapat dipakai saat luring. */
