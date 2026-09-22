@@ -395,8 +395,15 @@ async function pullRemote(silent) {
   }
 }
 
-/* Urutan: kirim antrean dahulu, lalu ambil pembaruan dari basis data */
+/* Urutan: kirim antrean dahulu, lalu ambil pembaruan dari basis data.
+   HANYA ADMIN yang boleh memicu sinkronisasi MANUAL (tombol "Sinkron sekarang").
+   Sinkron latar belakang (manual kosong) tetap berjalan untuk semua peran agar
+   presensi Pengurus & Peserta tidak tertahan di perangkat. */
 function syncNow(manual) {
+  if (manual && !isAdmin()) {
+    toast('Sinkronisasi manual hanya untuk Administrator', 'error');
+    return Promise.resolve(false);
+  }
   if (!apiReady()) {
     if (manual) toast('Basis data Supabase belum diatur — isi SUPABASE_URL & SUPABASE_ANON_KEY pada js/config.js', 'error');
     updateSyncUI();
@@ -497,6 +504,11 @@ function applyRoleVisibility() {
   });
   document.querySelectorAll('[data-admin-note]').forEach(el => {
     el.classList.toggle('hidden', !isAdmin());
+  });
+  /* Kebalikannya: kartu pengganti yang HANYA tampil bagi Pengurus & Peserta
+     (mis. pemberitahuan bahwa panel Sinkronisasi & Penyimpanan Luring dikunci). */
+  document.querySelectorAll('[data-non-admin-note]').forEach(el => {
+    el.classList.toggle('hidden', isAdmin());
   });
 }
 
@@ -1919,6 +1931,8 @@ function confirmClearLogs() {
 function setText(id, txt) { const el = $(id); if (el) el.textContent = txt; }
 
 function renderSettingsSync() {
+  /* Panel Sinkronisasi & Penyimpanan Luring bersifat khusus Administrator. */
+  if (!isAdmin()) return;
   const on = isOnline();
   setText('setNet', on ? 'Daring — peranti terhubung' : 'Luring — peranti tanpa sambungan');
   setText('setDb', typeof supaStatusText === 'function'
@@ -1939,8 +1953,9 @@ function renderSettingsSync() {
 }
 
 /* Uji koneksi basis data — untuk memastikan deploy berhasil sebelum dipakai.
-   Dibuka dari menu Pengaturan → "Uji Koneksi Database". */
+   Dibuka dari menu Pengaturan → "Uji Koneksi Database" (HANYA ADMIN). */
 async function testSupabase() {
+  if (!isAdmin()) { toast('Uji koneksi basis data hanya untuk Administrator', 'error'); return; }
   if (typeof supaDiagnose !== 'function') { toast('Lapisan data Supabase tidak termuat', 'error'); return; }
   showModal('Uji Koneksi Basis Data',
     '<p class="small muted">Memeriksa Supabase… mohon tunggu sejenak.</p>');
@@ -1977,6 +1992,7 @@ async function testSupabase() {
 }
 
 async function reloadLocalData() {
+  if (!isAdmin()) { toast('Panel Penyimpanan Luring hanya untuk Administrator', 'error'); return; }
   await loadLocal();
   if (state.currentUser) {
     const fresh = state.users.find(u => u.id === state.currentUser.id);

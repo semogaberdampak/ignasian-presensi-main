@@ -337,8 +337,22 @@
         </p>
       </div>
 
-      <div class="card">
+      <!-- Pemberitahuan bagi Pengurus & Peserta: panel Sinkronisasi dan
+           Penyimpanan Luring dikunci untuk Administrator. -->
+      <div class="card hidden" id="cardAdminOnlyNote" data-non-admin-note="">
+        <div class="card-title"><span class="ic" data-ic="cross"></span>Khusus Administrator</div>
+        <p class="tiny muted">
+          Panel <strong>Sinkronisasi</strong> dan <strong>Penyimpanan Luring</strong> hanya dapat
+          dibuka oleh Administrator. Data Anda tetap tersimpan di peranti ini dan dikirim ke
+          Supabase otomatis di latar belakang saat peranti kembali daring.
+        </p>
+      </div>
+
+      <!-- SINKRONISASI: hanya ADMIN (dikunci lewat data-admin-note + pemeriksaan
+           isAdmin() pada js/app.js). -->
+      <div class="card" id="cardSinkronisasi" data-admin-note="">
         <div class="card-title"><span class="ic" data-ic="sync"></span>Sinkronisasi</div>
+        <p class="card-sub">Panel ini hanya dapat dibuka oleh Administrator.</p>
 
         <div class="setting">
           <span class="ic" data-ic="compass"></span>
@@ -399,8 +413,10 @@
         </p>
       </div>
 
-      <div class="card">
+      <!-- PENYIMPANAN LURING: hanya ADMIN (dikunci lewat data-admin-note). -->
+      <div class="card" id="cardLuring" data-admin-note="">
         <div class="card-title"><span class="ic" data-ic="codex"></span>Penyimpanan Luring</div>
+        <p class="card-sub">Panel ini hanya dapat dibuka oleh Administrator.</p>
         <div class="setting">
           <span class="ic" data-ic="descend"></span>
           <div class="body">
@@ -470,6 +486,8 @@
         <ul class="steps">
           <li><strong>Log Sistem</strong> — menelaah &amp; menghapus catatan aktivitas aplikasi.</li>
           <li><strong>Daftar Hadir per Acara</strong> — kelola (ubah/hapus) &amp; cetak data presensi.</li>
+          <li><strong>Sinkronisasi &amp; Penyimpanan Luring</strong> — panel di Pengaturan: status
+            sambungan &amp; server, antrean perubahan, uji koneksi, dan muat ulang data peranti.</li>
         </ul>
 
         <p class="tiny muted center mt-14">Ad Maiorem Dei Gloriam · Ite, Inflammate Omnia</p>

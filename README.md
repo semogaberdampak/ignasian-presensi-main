@@ -169,15 +169,24 @@ terakhir), `outbox` (antrean), `tombstones` (penanda hapus).
 
 ## 6. Peran & hak akses
 
-| Peran | Jadwal & QR | Laporan semua peserta | Kelola akun | Log sistem | Ubah/hapus presensi |
-|---|---|---|---|---|---|
-| **Admin** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Pengurus** | ✅ | ✅ (baca saja) | ❌ | ❌ | ❌ |
-| **Peserta** | ❌ | ringkasan pribadi | ❌ | ❌ | ❌ |
+| Peran | Jadwal & QR | Laporan semua peserta | Kelola akun | Log sistem | Ubah/hapus presensi | Sinkronisasi & Penyimpanan Luring |
+|---|---|---|---|---|---|---|
+| **Admin** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Pengurus** | ✅ | ✅ (baca saja) | ❌ | ❌ | ❌ | ❌ |
+| **Peserta** | ❌ | ringkasan pribadi | ❌ | ❌ | ❌ | ❌ |
 
 Hak akses ditegakkan di antarmuka **dan** disaring di sumbar data aplikasi
 (`PAGE_ACCESS` pada `js/app.js`). Halaman yang dikunci tidak dapat dibuka
 meski alamat `#halaman` ditulis manual.
+
+Panel **Sinkronisasi** (sambungan, basis data, server sinkronisasi, antrean
+perubahan, sinkron terakhir, serta tombol *Sinkron sekarang*, *Muat ulang data
+peranti*, dan *Uji Koneksi Database*) dan panel **Penyimpanan Luring** pada menu
+**Pengaturan** hanya tampil untuk **Admin**. Pengurus & Peserta hanya melihat
+kartu pemberitahuan singkat; fungsi-fungsi itu juga ditolak di lapisan logika
+(`syncNow(true)`, `testSupabase()`, `reloadLocalData()` pada `js/app.js`).
+Sinkronisasi **otomatis di latar belakang tetap berjalan untuk semua peran**
+agar presensi mereka tidak tertahan di perangkat.
 
 ---
 
