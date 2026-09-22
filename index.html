@@ -351,7 +351,15 @@
         <div class="setting">
           <span class="ic" data-ic="rosette"></span>
           <div class="body">
-            <div class="name">Server</div>
+            <div class="name">Basis data</div>
+            <div class="desc" id="setDb">Memeriksa…</div>
+          </div>
+        </div>
+
+        <div class="setting">
+          <span class="ic" data-ic="sync"></span>
+          <div class="body">
+            <div class="name">Server sinkronisasi</div>
             <div class="desc" id="setApi">Memeriksa…</div>
           </div>
         </div>
@@ -380,6 +388,15 @@
             <span class="ic" data-ic="descend"></span>Muat ulang data peranti
           </button>
         </div>
+        <div class="btn-row mt-10">
+          <button class="btn btn-gold btn-sm" type="button" onclick="testSupabase()">
+            <span class="ic" data-ic="compass"></span>Uji Koneksi Database
+          </button>
+        </div>
+        <p class="tiny muted mt-10">
+          Basis data: Supabase. Bila tombol uji menyatakan tabel belum ada,
+          jalankan <strong>supabase/schema.sql</strong> pada SQL Editor Supabase.
+        </p>
       </div>
 
       <div class="card">
@@ -404,7 +421,7 @@
           <span class="ic" data-ic="cross"></span>
           <div class="body">
             <div class="name">Presensi Ignasian</div>
-            <div class="desc">Versi 4.0.1 · Ignatian Edition · © 2026</div>
+            <div class="desc">Versi 4.1.0 · Ignatian Edition · © 2026</div>
           </div>
         </div>
         <p class="tiny muted center">Ad Maiorem Dei Gloriam</p>
@@ -437,8 +454,9 @@
         <h3>Bekerja secara luring</h3>
         <ul class="steps">
           <li>Semua data tersimpan lebih dahulu di database peranti ini (IndexedDB).</li>
-          <li>Perubahan dikirim otomatis di latar belakang saat peranti kembali daring.</li>
-          <li>Data dari server digabung, tidak menimpa perubahan lokal yang belum terkirim.</li>
+          <li>Saat kembali daring, perubahan dikirim otomatis ke basis data Supabase di latar belakang.</li>
+          <li>Data dari Supabase digabung, tidak menimpa perubahan lokal yang belum terkirim.</li>
+          <li>Masuk pertama kali memerlukan sambungan internet agar akun terbaru dapat diambil.</li>
           <li>Simpan aplikasi ke layar utama agar dapat dibuka tanpa sambungan.</li>
         </ul>
 
@@ -649,7 +667,11 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
-<!-- Database aplikasi (IndexedDB) lalu ikon kustom dan inti aplikasi -->
+<!-- Konfigurasi layanan (Supabase) lalu lapisan data basis data -->
+<script src="js/config.js"></script>
+<script src="js/supabase.js"></script>
+
+<!-- Database peranti (IndexedDB, luring lebih dahulu) lalu ikon kustom dan inti aplikasi -->
 <script src="js/db.js"></script>
 <script src="js/icons.js"></script>
 <script src="js/app.js"></script>

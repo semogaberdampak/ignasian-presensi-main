@@ -6,9 +6,10 @@
    • Dokumen   : network-first, jatuh ke cache saat luring.
    • Aset lokal: cache-first + perbarui di latar.
    • CDN luar  : stale-while-revalidate (peta, font, pustaka QR).
-   • Data ke Google Apps Script tidak pernah di-cache (selalu daring).
+   • Data ke Supabase tidak pernah di-cache (selalu daring) — IndexedDB di
+     perangkat tetap menjadi salinan utama sehingga aplikasi aman luring.
    ========================================================================== */
-const VERSION = 'v10';
+const VERSION = 'v11';
 const SHELL_CACHE = 'ign-shell-' + VERSION;
 const RUNTIME_CACHE = 'ign-runtime-' + VERSION;
 
@@ -22,6 +23,8 @@ const SHELL = [
   './css/components.css',
   './css/pages.css',
   './css/utilities.css',
+  './js/config.js',
+  './js/supabase.js',
   './js/db.js',
   './js/icons.js',
   './js/app.js',
@@ -126,7 +129,10 @@ self.addEventListener('fetch', event => {
 
   let url;
   try { url = new URL(req.url); } catch (e) { return; }
-  if (url.hostname.indexOf('script.google.com') !== -1) return;   // data: selalu daring
+
+  /* Data basis data daring (Supabase) tidak pernah dicache — selalu daring. */
+  if (url.hostname.indexOf('supabase') !== -1) return;
+  if (url.hostname.indexOf('script.google.com') !== -1) return;   // layanan lama: selalu daring
 
   if (req.mode === 'navigate' || req.destination === 'document') {
     event.respondWith(networkFirst(req));

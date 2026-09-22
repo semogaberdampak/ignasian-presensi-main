@@ -2,24 +2,25 @@
    PRESENSI IGNASIAN — Aplikasi Inti
    ------------------------------------------------------------
    Prinsip: OFFLINE FIRST, sinkron daring menyusul.
-   1) Setiap perubahan langsung ditulis ke penyimpanan perangkat.
-   2) Perubahan masuk ke antrean (outbox) yang dikirim ke server
-      saat perangkat kembali daring (berurutan, tanpa kehilangan data).
-   3) Data server DIGABUNG (merge) — tidak menimpa perubahan lokal
+   1) Setiap perubahan langsung ditulis ke penyimpanan perangkat (IndexedDB).
+   2) Perubahan masuk ke antrean (outbox) yang dikirim ke basis data
+      Supabase saat perangkat kembali daring (berurutan, tanpa kehilangan data).
+   3) Data Supabase DIGABUNG (merge) — tidak menimpa perubahan lokal
       yang belum terkirim.
    ============================================================ */
 
 /* ---------- 1. KONFIGURASI ------------------------------------------------ */
-const CONFIG = {
+/* Pengaturan layanan (SUPABASE_URL, SUPABASE_ANON_KEY, dsb.) diambil dari
+   js/config.js agar hanya ada satu tempat pengisian. */
+const CONFIG = Object.assign({
   APP_NAME: 'Presensi Ignasian',
-  VERSION: '4.0.1',
-  // Ganti dengan URL Google Apps Script Web App Anda setelah deploy
-  API_URL: 'https://script.google.com/macros/s/AKfycbyIVir8J18Am5ZW9Q8NdMimXgUvvFnAihv2f6YfATwzgVDfGTJB-iSLpEjjNv-Hm2jA/exec',
+  VERSION: '4.1.0',
   SYNC_INTERVAL: 60000,   // 60 detik saat daring
   MAX_USERS: 50,
   MAX_QUEUE: 500,
-  MAX_LOG: 500
-};
+  MAX_LOG: 500,
+  MAX_SYNC_TRIES: 5
+}, window.IGN_CONFIG || {});
 
 const STORE_KEYS = {
   users: 'ign_users', jadwal: 'ign_jadwal', presensi: 'ign_presensi',
@@ -44,7 +45,10 @@ let state = {
   scanner: null,
   map: null, mapJadwal: null, markerJadwal: null,
   userLat: null, userLng: null,
-  syncing: false, activePage: 'home'
+  syncing: false, activePage: 'home',
+  apiHint: null,          // pesan ramah bila basis data menolak permintaan
+  backoffUntil: 0,        // jeda agar tidak membanjiri server yang bermasalah
+  lastPushError: null     // galat terakhir saat mengirim antrean
 };
 
 /* ---------- 3. UTILITAS -------------------------------------------------- */
@@ -204,8 +208,9 @@ async function loadLocal() {
 }
 
 /* ---------- 6. ANTREAN SINKRON (OUTBOX) --------------------------------- */
+/* Basis data daring siap dipakai? (Supabase sudah dikonfigurasi di js/config.js) */
 function apiReady() {
-  return !!CONFIG.API_URL && CONFIG.API_URL.indexOf('YOUR_DEPLOYMENT_ID') === -1;
+  return typeof supaReady === 'function' && supaReady();
 }
 function isOnline() { return navigator.onLine !== false; }
 
@@ -237,21 +242,36 @@ function pendingIds(coll) {
   return ids;
 }
 
+/* Kirim satu operasi antrean ke basis data Supabase.
+   Mengembalikan true bila berhasil; galat terakhir disimpan di
+   state.lastPushError supaya flushQueue() dapat memutuskan langkah berikutnya. */
 async function postToServer(op) {
+  state.lastPushError = null;
   try {
-    await fetch(CONFIG.API_URL, {
-      method: 'POST',
-      mode: 'no-cors',                       // respons opaque: cukup tahu terkirim
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
-        type: op.type, data: op.data, ts: op.ts, opId: op.opId,
-        user: state.currentUser ? state.currentUser.username : null
-      })
-    });
+    if (op.type === 'delete') {
+      const data = op.data || {};
+      await supaDelete(data.collection, data.id);
+      return true;
+    }
+    const coll = SUPA_OUTBOX_TABLES[op.type] || null;
+    if (!coll) {
+      console.warn('[Outbox] jenis operasi tidak dikenal, dilewati:', op.type);
+      return true;                       /* dibuang agar antrean tidak macet */
+    }
+    await supaPush(coll, op.data);
     return true;
   } catch (e) {
+    state.lastPushError = e;
     return false;
   }
+}
+
+/* Geser operasi ke belakang antrean agar tidak menghambat data lain.
+   Data TIDAK pernah dihapus — tidak ada yang hilang karena galat sementara. */
+function postponeOp(op) {
+  op._postponed = true;
+  state.outbox.shift();
+  state.outbox.push(op);
 }
 
 async function flushQueue() {
@@ -261,16 +281,44 @@ async function flushQueue() {
   }
   state.syncing = true;
   updateSyncUI();
+
+  const total = state.outbox.length;
   let sent = 0;
+  let postponed = 0;
+
   try {
-    while (state.outbox.length) {
+    while (state.outbox.length && postponed < total) {
       const op = state.outbox[0];
+      if (op._postponed) break;                  /* sudah dicoba sekali pada proses ini */
+
+      /* Operasi yang sedang menunggu jeda (galat tetap) tidak menghambat sisanya */
+      if (op.nextTryAt && Date.now() < op.nextTryAt) {
+        postponeOp(op);
+        postponed++;
+        continue;
+      }
+
       const ok = await postToServer(op);
       if (!ok) {
+        const err = state.lastPushError;
         op.tries = (op.tries || 0) + 1;
         op.lastTry = new Date().toISOString();
-        break;                               // coba lagi pada pemicu berikutnya
+        op.lastError = err ? String(err.detail || err.message || err) : 'gagal terkirim';
+        state.apiHint = err ? supaErrorHint(err) : null;
+
+        /* Galat tetap (data tidak sah, mis. 400/409) tidak boleh menahan antrean:
+           geser ke belakang dan beri jeda bertambah, lalu lanjut ke operasi lain. */
+        if (supaIsPermanent(err)) {
+          op.nextTryAt = Date.now() + Math.min(30 * 60 * 1000, 60 * 1000 * op.tries);
+          postponeOp(op);
+          postponed++;
+          continue;
+        }
+        break;                                   /* galat sementara: coba lagi nanti */
       }
+
+      delete op.nextTryAt;
+      delete op.lastError;
       state.outbox.shift();
       sent++;
       saveLocal();
@@ -278,6 +326,7 @@ async function flushQueue() {
     }
     if (sent) state.meta.lastSync = new Date().toISOString();
   } finally {
+    state.outbox.forEach(o => { delete o._postponed; });
     state.syncing = false;
     saveLocal();
     updateSyncUI();
@@ -319,54 +368,37 @@ function mergeRemote(data) {
 
 async function pullRemote(silent) {
   if (!apiReady() || !isOnline()) { updateSyncUI(); return false; }
-  /* Jangan spam server yang URL-nya salah/404: jeda 5 menit setelah gagal,
-     agar console tidak penuh "GET ... 404" seperti di laporan. */
+  /* Jangan membanjiri server yang sedang bermasalah (mis. tabel belum dibuat
+     atau kunci anon salah): jeda 5 menit setelah gagal konfigurasi. */
   if (state.backoffUntil && Date.now() < state.backoffUntil) { updateSyncUI('error'); return false; }
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15000);
-    let res;
-    try {
-      res = await fetch(CONFIG.API_URL + '?action=getAll&t=' + Date.now(), { cache: 'no-store', signal: ctrl.signal });
-    } finally { clearTimeout(timer); }
-    if (res.status === 404) {
-      state.backoffUntil = Date.now() + 5 * 60 * 1000;
-      state.apiHint = 'URL Apps Script 404 — deploy ulang GAS sebagai Web App (akses: Anyone) lalu ganti CONFIG.API_URL. Data tetap aman lokal.';
-      console.warn('Sinkron getAll: HTTP 404 — URL Web App salah / belum deploy Anyone. Backoff 5 menit.');
-      updateSyncUI('error');
-      return false;
-    }
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    let data;
-    try {
-      data = await res.json();
-    } catch (e) {
-      /* GAS kadang mengembalikan HTML (mis. halaman izin / redirect login).
-         Itu bukan kegagalan jaringan — abaikan diam-diam agar tidak dianggap luring. */
-      updateSyncUI('ok-local');
-      return false;
-    }
-    state.apiHint = null;
+    const data = await supaPullAll({ includeLogs: isAdmin() });
     const changed = mergeRemote(data);
+    state.apiHint = null;
+    state.backoffUntil = 0;
     state.meta.lastSync = new Date().toISOString();
     saveLocal();
     if (changed) {
       renderActivePage();
-      if (!silent) toast('Data diperbarui dari server', 'success');
+      if (!silent) toast('Data diperbarui dari Supabase', 'success');
     }
     updateSyncUI();
     return true;
   } catch (e) {
-    if (e && e.name === 'AbortError') updateSyncUI('error');
-    else updateSyncUI('error');
+    state.apiHint = supaErrorHint(e);
+    /* Gagal konfigurasi (tabel/kunci) bukan sekadar luring — beri jeda agar
+       console dan kuota tidak terbuang. Galat jaringan cukup dicoba lagi. */
+    if (!e || !e.network) state.backoffUntil = Date.now() + 5 * 60 * 1000;
+    console.warn('[Supabase] tarikan data gagal:', e);
+    updateSyncUI('error');
     return false;
   }
 }
 
-/* Urutan: kirim antrean dahulu, lalu ambil pembaruan dari server */
+/* Urutan: kirim antrean dahulu, lalu ambil pembaruan dari basis data */
 function syncNow(manual) {
   if (!apiReady()) {
-    if (manual) toast('Alamat API server belum diatur pada CONFIG.API_URL', 'error');
+    if (manual) toast('Basis data Supabase belum diatur — isi SUPABASE_URL & SUPABASE_ANON_KEY pada js/config.js', 'error');
     updateSyncUI();
     return Promise.resolve(false);
   }
@@ -380,8 +412,9 @@ function syncNow(manual) {
     await pullRemote(!manual);
     if (manual) {
       const left = state.outbox.length;
-      toast(left ? left + ' data belum terkirim, akan dicoba lagi' : 'Sinkronisasi selesai · data terbaru',
-        left ? 'error' : 'success');
+      if (left) toast(left + ' data belum terkirim, akan dicoba lagi', 'error');
+      else if (state.apiHint) toast(state.apiHint, 'error');
+      else toast('Sinkronisasi selesai · data terbaru dari Supabase', 'success');
     }
     return true;
   })();
@@ -473,7 +506,10 @@ async function doLogin() {
   const p = $('loginPass').value;
   if (!u || !p) { toast('Lengkapi username & password', 'error'); return; }
 
-  if (state.users.length === 0) await seedDefaultUsers();
+  /* Akun contoh hanya dibuat saat aplikasi berdiri sendiri (Supabase belum
+     diatur). Pada mode Supabase, akun dibuat lewat Registrasi atau seed.sql
+     supaya kata sandi bawaan tidak pernah ikut terpasang di produksi. */
+  if (state.users.length === 0 && !apiReady()) await seedDefaultUsers();
 
   const btn = $('btnLogin');
   if (btn) { btn.disabled = true; btn.dataset.label = btn.innerHTML; btn.textContent = 'Memeriksa…'; }
@@ -481,13 +517,34 @@ async function doLogin() {
   try {
     const passHash = await sha256(p);
     const needle = u.toLowerCase();
-    const user = state.users.find(x =>
+    const findUser = () => state.users.find(x =>
       String(x.username || '').toLowerCase() === needle && x.passHash === passHash && x.status === 'aktif');
 
-    if (!user) { toast('Username/password salah atau akun nonaktif', 'error'); return; }
+    let user = findUser();
+
+    /* Akun dibuat Administrator di peranti lain → tarik dahulu dari Supabase
+       agar pengguna baru dapat langsung masuk pada peranti ini. */
+    if (!user && apiReady() && isOnline() &&
+      !state.users.some(x => String(x.username || '').toLowerCase() === needle)) {
+      const pulled = await pullRemote(true);
+      if (pulled) user = findUser();
+    }
+
+    if (!user) {
+      if (apiReady() && !isOnline() && state.users.length === 0) {
+        toast('Akun belum tersimpan di peranti ini dan perangkat sedang luring — sambungkan internet lalu coba lagi', 'error');
+      } else if (apiReady() && !state.users.length) {
+        toast('Belum ada akun pada basis data. Minta Administrator membuat akun pertama (supabase/seed.sql atau menu Registrasi).', 'error');
+      } else if (state.apiHint) {
+        toast(state.apiHint, 'error');
+      } else {
+        toast('Username/password salah atau akun nonaktif', 'error');
+      }
+      return;
+    }
 
     state.currentUser = user;
-    kvSet('session', { id: user.id, t: Date.now() }); /* sesi disimpan di database */
+    kvSet('session', { id: user.id, t: Date.now() }); /* sesi disimpan di database peranti */
     addLog('LOGIN', { username: user.username });
     toast('Selamat datang, ' + user.nama + '!', 'success');
     showMainApp();
@@ -508,7 +565,8 @@ function doLogout() {
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
 }
 
-/* Pengguna contoh untuk pemakaian pertama (ganti password di produksi) */
+/* Pengguna contoh untuk pemakaian mandiri (tanpa Supabase).
+   Pada mode Supabase gunakan supabase/seed.sql — lihat README.md. */
 async function seedDefaultUsers() {
   const defaults = [
     { nama: 'Administrator', username: 'admin', pass: 'admin123', hp: '081234567890', role: 'admin', email: 'admin@ignasian.id' },
@@ -1863,9 +1921,12 @@ function setText(id, txt) { const el = $(id); if (el) el.textContent = txt; }
 function renderSettingsSync() {
   const on = isOnline();
   setText('setNet', on ? 'Daring — peranti terhubung' : 'Luring — peranti tanpa sambungan');
+  setText('setDb', typeof supaStatusText === 'function'
+    ? supaStatusText()
+    : 'Basis data belum diatur');
   setText('setApi', apiReady()
-    ? 'Server sinkronisasi aktif'
-    : 'Mode mandiri — CONFIG.API_URL belum diatur (data hanya di peranti ini)');
+    ? (state.apiHint ? 'Perlu perhatian: ' + state.apiHint : 'Supabase tersambung — sinkronisasi otomatis aktif')
+    : 'Mode mandiri — isi SUPABASE_URL & SUPABASE_ANON_KEY pada js/config.js');
   setText('setQueue', state.outbox.length
     ? state.outbox.length + ' perubahan menunggu dikirim'
     : 'Tidak ada perubahan menunggu');
@@ -1875,6 +1936,44 @@ function renderSettingsSync() {
 
   const btn = $('btnSyncNow');
   if (btn) btn.disabled = !apiReady() || !on || state.syncing;
+}
+
+/* Uji koneksi basis data — untuk memastikan deploy berhasil sebelum dipakai.
+   Dibuka dari menu Pengaturan → "Uji Koneksi Database". */
+async function testSupabase() {
+  if (typeof supaDiagnose !== 'function') { toast('Lapisan data Supabase tidak termuat', 'error'); return; }
+  showModal('Uji Koneksi Basis Data',
+    '<p class="small muted">Memeriksa Supabase… mohon tunggu sejenak.</p>');
+  let report;
+  try {
+    report = await supaDiagnose();
+  } catch (e) {
+    report = { ready: false, host: '', tables: [], ok: false, error: String((e && e.message) || e) };
+  }
+
+  let body = '<div class="list">' +
+    '<div class="list-item">' + ic('compass') +
+    '<div class="body"><strong>Alamat proyek</strong>' +
+    '<div class="meta">' + esc(report.host || 'belum diatur pada js/config.js') + '</div></div></div>';
+
+  (report.tables || []).forEach(t => {
+    body += '<div class="list-item">' + ic(t.ok ? 'seal' : 'scrap') +
+      '<div class="body"><strong>Tabel ' + esc(t.name) + '</strong>' +
+      '<div class="meta">' + (t.ok
+        ? (t.count == null ? 'terbaca' : esc(String(t.count)) + ' baris')
+        : esc(t.error || 'gagal dibaca')) +
+      '</div></div></div>';
+  });
+  body += '</div>';
+
+  body += report.ok
+    ? '<p class="small mt-14">Basis data siap dipakai: keempat tabel terbaca dengan kunci anon. ' +
+      'Presensi, jadwal, dan akun akan disinkronkan otomatis.</p>'
+    : '<p class="small mt-14">' + esc(report.error || 'Sebagian tabel belum siap dipakai.') + '</p>';
+
+  body += '<div class="modal-actions">' +
+    '<button class="btn btn-primary" onclick="closeModal()">' + ic('seal') + 'Tutup</button></div>';
+  showModal('Uji Koneksi Basis Data', body);
 }
 
 async function reloadLocalData() {
@@ -1907,8 +2006,10 @@ function renderBantuan() {
   setText('bantuanVersi', 'Versi ' + CONFIG.VERSION);
   setText('bantuanPeran', roleName(state.currentUser.role));
   setText('bantuanLuring', apiReady()
-    ? (isOnline() ? 'Peranti daring — data disinkronkan otomatis.' : 'Peranti luring — data ditahan lalu dikirim otomatis saat kembali daring.')
-    : 'Mode mandiri: seluruh data tersimpan di peranti ini (tanpa server).');
+    ? (isOnline()
+      ? 'Peranti daring — data disinkronkan otomatis ke Supabase.'
+      : 'Peranti luring — data ditahan di perangkat lalu dikirim otomatis ke Supabase saat kembali daring.')
+    : 'Mode mandiri: seluruh data tersimpan di peranti ini (Supabase belum dikonfigurasi).');
 }
 
 /* ---------- 28. MODAL -------------------------------------------------- */
@@ -1945,7 +2046,9 @@ async function init() {
   watchSystemTheme();
 
   await loadLocal();
-  if (!state.users.length) await seedDefaultUsers();
+  /* Akun contoh hanya untuk pemakaian mandiri; pada mode Supabase akun dibuat
+     lewat menu Registrasi atau supabase/seed.sql. */
+  if (!state.users.length && !apiReady()) await seedDefaultUsers();
 
   bindEvents();
   applyRoleVisibility();
