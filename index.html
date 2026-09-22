@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#6E2632" />
 <meta name="color-scheme" content="light dark" />
-<meta name="description" content="Presensi Ignasian — presensi digital berbasis QR dan lokasi (GPS) dengan semangat Ignatian. Luring lebih dahulu, sinkron menyusul." />
+<meta name="description" content="Presensi Ignasian — presensi digital berbasis QR dengan semangat Ignatian. Luring lebih dahulu, sinkron menyusul." />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -75,10 +75,7 @@
 
     <div class="divider"></div>
     <div class="login-hint">
-      <strong>Akun contoh</strong><br />
-      Administrator <code>admin / admin123</code><br />
-      Pengurus <code>pengurus / pengurus123</code><br />
-      Peserta <code>peserta / peserta123</code>
+      Hubungi Administrator untuk akun &amp; kata sandi Anda.
     </div>
   </div>
   <p class="login-foot">Ite, Inflammate Omnia</p>
@@ -115,9 +112,9 @@
         <p class="tiny muted mt-10" id="homeScope"></p>
       </div>
 
-      <div class="card" id="homeActivityCard">
+      <div class="card" id="homeActivityCard" data-admin-note="">
         <div class="card-title"><span class="ic" data-ic="ledger"></span>Aktivitas Terbaru</div>
-        <p class="card-sub">Catatan sistem — hanya untuk Administrator &amp; Pengurus.</p>
+        <p class="card-sub">Catatan sistem — hanya untuk Administrator.</p>
         <div id="homeActivity"></div>
       </div>
 
@@ -126,15 +123,6 @@
 
     <!-- ============ PRESENSI ============ -->
     <section id="page-presensi" class="page hidden">
-      <div class="tabs" role="tablist">
-        <button class="tab active" type="button" role="tab" onclick="switchPresensiTab('scan',this)">
-          <span class="ic" data-ic="viewfinder"></span>Pindai QR
-        </button>
-        <button class="tab" type="button" role="tab" onclick="switchPresensiTab('manual',this)">
-          <span class="ic" data-ic="compass"></span>Presensi GPS
-        </button>
-      </div>
-
       <div id="presensi-scan">
         <div class="card">
           <div class="card-title"><span class="ic" data-ic="matrix"></span>Pindai Kode QR Venue</div>
@@ -160,49 +148,16 @@
           <input type="file" id="qrFileInput" accept="image/*" capture="environment" class="hidden" onchange="scanFromFile(this)" />
         </div>
       </div>
-
-      <div id="presensi-manual" class="hidden">
-        <div class="card">
-          <div class="card-title"><span class="ic" data-ic="compass"></span>Presensi Manual (GPS)</div>
-          <div class="form-group">
-            <label for="manualSesi">Sesi acara</label>
-            <select id="manualSesi" class="form-control"></select>
-          </div>
-          <div class="form-group">
-            <label for="manualStatus">Status kehadiran</label>
-            <select id="manualStatus" class="form-control">
-              <option value="hadir">Hadir</option>
-              <option value="izin">Izin</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="manualKeterangan">Keterangan (opsional)</label>
-            <textarea id="manualKeterangan" class="form-control" rows="2"
-                      placeholder="Catatan tambahan…"></textarea>
-          </div>
-
-          <div id="map" class="map"></div>
-          <p class="gps-info" id="gpsInfo">Menunggu titik lokasi…</p>
-
-          <div class="btn-row mt-10">
-            <button class="btn btn-outline" type="button" onclick="locateUser(true)">
-              <span class="ic" data-ic="compass"></span>Perbarui Lokasi
-            </button>
-            <button class="btn btn-primary" type="button" onclick="submitManual()">
-              <span class="ic" data-ic="seal"></span>Kirim Presensi
-            </button>
-          </div>
-        </div>
-      </div>
     </section>
 
     <!-- ============ RIWAYAT ============ -->
     <section id="page-riwayat" class="page hidden">
       <div class="card">
-        <div class="card-title"><span class="ic" data-ic="codex"></span>Riwayat Presensi Saya</div>
+        <div class="card-title"><span class="ic" data-ic="codex"></span><span id="riwayatTitle">Riwayat Presensi Saya</span></div>
+        <p class="card-sub" id="riwayatScope"></p>
         <div class="table-wrap">
           <table class="responsive">
-            <thead><tr><th>Tanggal</th><th>Sesi</th><th>Status</th><th>Metode</th></tr></thead>
+            <thead><tr><th>Tanggal</th><th>Sesi</th><th>Nama</th><th>Status</th><th>Metode</th></tr></thead>
             <tbody id="riwayatBody"></tbody>
           </table>
         </div>
@@ -242,9 +197,10 @@
         <div data-role="staff">
           <h3 class="mb-8">Daftar Hadir per Acara</h3>
           <p class="card-sub" id="laporanAcaraInfo">Pilih acara untuk melihat daftar hadir.</p>
+          <p class="tiny muted mb-8" data-role="admin">Mode admin: Anda dapat mengubah status/keterangan atau menghapus baris presensi.</p>
           <div class="table-wrap scroll-y">
             <table class="responsive">
-              <thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Waktu</th><th>Metode</th><th>Jarak</th><th>Ket.</th></tr></thead>
+              <thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Waktu</th><th>Metode</th><th>Jarak</th><th>Ket.</th><th data-role="admin">Kelola</th></tr></thead>
               <tbody id="laporanAcaraBody"></tbody>
             </table>
           </div>
@@ -290,11 +246,9 @@
           <button class="btn btn-outline" type="button" data-role="staff" onclick="showPage('qr-gen')">
             <span class="ic" data-ic="matrix"></span>Buat QR
           </button>
-          <button class="btn btn-outline" type="button" data-role="staff" onclick="showPage('log')">
+          <button class="btn btn-outline" type="button" data-role="admin" onclick="showPage('log')">
             <span class="ic" data-ic="ledger"></span>Log Sistem
           </button>
-
-          <!-- Manajemen pengguna: hanya ADMIN -->
           <button class="btn btn-outline" type="button" data-role="admin" onclick="showPage('users')">
             <span class="ic" data-ic="halopair"></span>Peserta
           </button>
@@ -438,9 +392,9 @@
     <section id="page-bantuan" class="page hidden">
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="candle"></span>Panduan Pemakaian</div>
-        <p class="lead">
-          <strong>Presensi Ignasian</strong> mencatat kehadiran melalui kode QR venue atau titik
-          lokasi GPS — dengan semangat Ignatian: rajin, jujur, dan tertib.
+          <p class="lead">
+          <strong>Presensi Ignasian</strong> mencatat kehadiran melalui kode QR venue —
+          dengan semangat Ignatian: rajin, jujur, dan tertib.
         </p>
         <div class="divider"></div>
         <h3>Peran Anda: <span id="bantuanPeran">—</span></h3>
@@ -450,19 +404,10 @@
 
         <h3>Cara mempresensi dengan QR</h3>
         <ol class="steps">
-          <li>Buka <strong>Presensi → Pindai QR</strong>.</li>
+          <li>Buka <strong>Presensi</strong>.</li>
           <li>Izinkan kamera dan layanan lokasi.</li>
           <li>Pindai kode QR yang tertempel di venue.</li>
           <li>Sistem memeriksa sesi aktif, radius venue, dan duplikasi kehadiran.</li>
-        </ol>
-
-        <div class="divider"></div>
-        <h3>Cara mempresensi manual (GPS)</h3>
-        <ol class="steps">
-          <li>Buka <strong>Presensi → Presensi GPS</strong>.</li>
-          <li>Pilih sesi acara yang sedang berlangsung.</li>
-          <li>Tentukan status: Hadir atau Izin.</li>
-          <li>Tekan <strong>Kirim Presensi</strong> — jarak Anda terhadap venue turut dicatat.</li>
         </ol>
 
         <div class="divider"></div>
@@ -479,7 +424,11 @@
         <ul class="steps">
           <li><strong>Jadwal</strong> — membuat acara, venue, durasi, dan radius validasi.</li>
           <li><strong>Buat QR</strong> — menghasilkan kode QR untuk dicetak dan ditempel di venue.</li>
-          <li><strong>Log Sistem</strong> — menelaah catatan aktivitas aplikasi.</li>
+        </ul>
+        <h3>Khusus Administrator</h3>
+        <ul class="steps">
+          <li><strong>Log Sistem</strong> — menelaah &amp; menghapus catatan aktivitas aplikasi.</li>
+          <li><strong>Daftar Hadir per Acara</strong> — kelola (ubah/hapus) &amp; cetak data presensi.</li>
         </ul>
 
         <p class="tiny muted center mt-14">Ad Maiorem Dei Gloriam · Ite, Inflammate Omnia</p>
@@ -624,14 +573,19 @@
       </div>
     </section>
 
-    <!-- ============ LOG SISTEM (ADMIN & PENGURUS) ============ -->
+    <!-- ============ LOG SISTEM (ADMIN) ============ -->
     <section id="page-log" class="page hidden">
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="ledger"></span>Log Aktivitas Sistem</div>
         <p class="card-sub">
-          Catatan ini hanya dapat dibuka oleh Administrator &amp; Pengurus.
-          Peserta tidak melihat aktivitas sistem.
+          Catatan ini hanya dapat dibuka oleh Administrator.
+          Peserta &amp; Pengurus tidak melihat aktivitas sistem.
         </p>
+        <div class="btn-row mb-14">
+          <button class="btn btn-danger btn-sm" type="button" onclick="clearLogs(false)">
+            <span class="ic" data-ic="scrap"></span>Hapus Tampilan Log
+          </button>
+        </div>
         <div id="logList"></div>
       </div>
     </section>

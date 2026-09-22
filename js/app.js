@@ -30,8 +30,8 @@ const STORE_KEYS = {
 const STAFF_ROLES = ['admin', 'pengurus'];
 /* Halaman yang dikunci per peran — JADWAL & BUAT QR hanya ADMIN/PENGURUS */
 const PAGE_ACCESS = {
-  jadwal: 'staff', 'qr-gen': 'staff', log: 'staff',
-  users: 'admin', registrasi: 'admin'
+  jadwal: 'staff', 'qr-gen': 'staff',
+  users: 'admin', registrasi: 'admin', log: 'admin'
 };
 const ROLE_LABEL = { admin: 'Administrator', pengurus: 'Pengurus', peserta: 'Peserta' };
 
@@ -612,10 +612,7 @@ function showPage(name, btn) {
 function renderPage(name) {
   switch (name) {
     case 'home': renderHome(); break;
-    case 'presensi':
-      renderManualSesi();
-      if (!$('presensi-manual').classList.contains('hidden')) setTimeout(initMap, 120);
-      break;
+    case 'presensi': break;
     case 'riwayat': renderRiwayat(); break;
     case 'laporan': prepareLaporan(); break;
     case 'lainnya': renderLainnya(); break;
@@ -639,8 +636,9 @@ function showMainApp() {
   applyRoleVisibility();
   updateSyncUI();
 
-  const hash = (location.hash || '').replace('#', '');
-  showPage(hash && canAccess(hash) ? hash : 'home');
+  /* Setiap LOGIN selalu force ke Beranda — abaikan hash lama. */
+  try { history.replaceState(null, '', '#home'); } catch (e) { /* abaikan */ }
+  showPage('home');
 }
 
 /* Kartu pengguna di kepala aplikasi (memuat indikator sinkron) */
@@ -668,8 +666,13 @@ function renderHome() {
   const feed = $('homeActivity');
   const extra = $('adminHomeExtra');
 
-  if (isStaff()) {
-    /* ADMIN & PENGURUS: ringkasan seluruh peserta + arus aktivitas sistem */
+  /* Aktivitas Terbaru + Log: HANYA ADMIN. Pengurus tidak melihat. */
+  const actCard = $('homeActivityCard');
+  if (actCard) actCard.classList.toggle('hidden', !isAdmin());
+  if (feed && !isAdmin()) { feed.classList.add('hidden'); feed.innerHTML = ''; }
+
+  if (isAdmin()) {
+    /* ADMIN: ringkasan seluruh peserta + arus aktivitas sistem */
     setText('homeScope', 'Ringkasan seluruh peserta aktif hari ini.');
     const today = new Date().toDateString();
     const todayPres = state.presensi.filter(p => new Date(p.timestamp).toDateString() === today);
@@ -683,8 +686,36 @@ function renderHome() {
 
     feed.classList.remove('hidden');
     feed.innerHTML = renderActivityFeed();
-    const actCard = $('homeActivityCard');
-    if (actCard) actCard.classList.remove('hidden');
+
+    const upcoming = state.jadwal
+      .filter(j => new Date(j.tanggal).getTime() > Date.now())
+      .sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal))
+      .slice(0, 3);
+    extra.innerHTML = cardWrap('horarium', 'Jadwal Mendatang', upcoming.length
+      ? '<div class="list">' + upcoming.map(j => `
+          <div class="list-item">
+            ${ic('horarium')}
+            <div class="body">
+              <strong>${esc(j.nama)}</strong>
+              <div class="meta">${esc(j.venue)} · ${fmtDateTime(j.tanggal)}</div>
+            </div>
+          </div>`).join('') + '</div>'
+      : '<div class="empty">' + ic('horarium', 'ic-lg') + '<div>Belum ada jadwal mendatang</div></div>');
+    return;
+  }
+
+  if (isStaff()) {
+    /* PENGURUS: ringkasan seluruh peserta TANPA aktivitas sistem */
+    setText('homeScope', 'Ringkasan seluruh peserta aktif hari ini.');
+    const today = new Date().toDateString();
+    const todayPres = state.presensi.filter(p => new Date(p.timestamp).toDateString() === today);
+    const peserta = state.users.filter(u => u.role === 'peserta' && u.status === 'aktif');
+
+    box.innerHTML =
+      statCard('Peserta Terdaftar', peserta.length, '') +
+      statCard('Hadir Hari Ini', todayPres.filter(p => p.status === 'hadir').length, 'hadir') +
+      statCard('Izin Hari Ini', todayPres.filter(p => p.status === 'izin').length, 'izin') +
+      statCard('Belum Presensi', Math.max(0, peserta.length - todayPres.length), 'alpha');
 
     const upcoming = state.jadwal
       .filter(j => new Date(j.tanggal).getTime() > Date.now())
@@ -754,15 +785,16 @@ function renderHome() {
           <div class="body">
             <strong>${esc(last.jadwalNama || '-')}</strong>
             <div class="meta">${esc(last.venue || '')} · ${fmtDateTime(last.timestamp)}</div>
-            <div class="meta">Metode: ${last.metode === 'qr' ? 'Pindai QR' : 'Presensi GPS'}</div>
+            <div class="meta">Metode: Pindai QR</div>
           </div>
           <span class="badge badge-${esc(last.status)}">${esc(last.status)}</span>
         </div>`
       : '<div class="empty">' + ic('scrap', 'ic-lg') + '<div>Anda belum pernah presensi</div></div>');
 }
 
-/* Catatan aktivitas sistem — khusus ADMIN & PENGURUS */
+/* Catatan aktivitas sistem — HANYA ADMIN (Pengurus tidak melihat) */
 function renderActivityFeed() {
+  if (!isAdmin()) return '';
   const recent = state.logs.slice(0, 8);
   if (!recent.length) {
     return '<div class="empty">' + ic('ledger', 'ic-lg') + '<div>Belum ada catatan aktivitas</div></div>';
@@ -771,7 +803,8 @@ function renderActivityFeed() {
     LOGIN: 'keycross', LOGOUT: 'gate', PRESENSI: 'pilgrim', PRESENSI_GAGAL: 'scrap',
     CREATE_USER: 'quill', CREATE_JADWAL: 'horarium', GENERATE_QR: 'matrix',
     DELETE_JADWAL: 'scrap', DELETE_USER: 'scrap', TOGGLE_USER: 'lamp',
-    UPDATE_PROFILE: 'halobust', VIEW_LAPORAN: 'bulla', SCAN_ERROR: 'scrap'
+    UPDATE_PROFILE: 'halobust', VIEW_LAPORAN: 'bulla', SCAN_ERROR: 'scrap',
+    DELETE_PRESENSI: 'scrap', UPDATE_PRESENSI: 'quill', PRINT_LAPORAN: 'bulla', EXPORT_LAPORAN: 'descend'
   };
   return '<div class="list">' + recent.map(l => `
     <div class="list-item">
@@ -784,36 +817,8 @@ function renderActivityFeed() {
       </div>
     </div>`).join('') + '</div>';
 }
-/* ---------- 15. PRESENSI: TAB, SESI, PETA, LOKASI ---------------------- */
-function switchPresensiTab(tab, btn) {
-  document.querySelectorAll('#page-presensi .tab').forEach(t => t.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  $('presensi-scan').classList.toggle('hidden', tab !== 'scan');
-  $('presensi-manual').classList.toggle('hidden', tab !== 'manual');
-  if (tab === 'manual') setTimeout(initMap, 120);
-}
-
-/* Sesi yang boleh dipresensi: ±1 jam dari jadwal */
-function activeSessions() {
-  const now = Date.now();
-  return state.jadwal.filter(j => {
-    const t = new Date(j.tanggal).getTime();
-    const end = t + (j.durasi || 60) * 60000;
-    return now >= t - 3600000 && now <= end + 3600000;
-  });
-}
-
-function renderManualSesi() {
-  const sel = $('manualSesi');
-  const active = activeSessions();
-  if (!active.length) {
-    sel.innerHTML = '<option value="">Tidak ada sesi aktif saat ini</option>';
-    return;
-  }
-  sel.innerHTML = active
-    .map(j => '<option value="' + esc(j.id) + '">' + esc(j.nama) + ' — ' + esc(j.venue) + '</option>')
-    .join('');
-}
+/* ---------- 15. LOKASI GPS (dipakai validasi QR saja) ------------------- */
+/* Presensi MANUAL (GPS) sudah dihapus sesuai permintaan — presensi hanya via QR. */
 
 function mapOfflineNotice(id) {
   const el = $(id);
@@ -824,19 +829,12 @@ function mapOfflineNotice(id) {
 }
 
 function initMap() {
-  if (!$('map')) return;
-  if (typeof L === 'undefined') { mapOfflineNotice('map'); return; }
-  if (state.map) { state.map.invalidateSize(); return; }
-
-  state.map = L.map('map').setView([-2.5, 118], 5);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap', maxZoom: 19
-  }).addTo(state.map);
-
-  locateUser(true);
+  /* Peta presensi manual sudah dihapus (presensi hanya via QR). Stub ini
+     dipertahankan agar pemanggil lama tidak error. */
+  return;
 }
 
-/* Ambil posisi GPS — dipakai layar presensi manual */
+/* Ambil posisi GPS — hanya dipakai validasi QR (tidak ada lagi layar manual) */
 function gpsErrorMessage(err) {
   const code = err && err.code;
   const msg = String((err && err.message) || '');
@@ -852,45 +850,9 @@ function gpsErrorMessage(err) {
 }
 
 function locateUser(moveMap) {
-  const info = $('gpsInfo');
-  if (!navigator.geolocation) {
-    if (info) info.textContent = 'Peranti ini tidak mendukung layanan lokasi.';
-    return Promise.resolve(null);
-  }
-  if (!window.isSecureContext) {
-    if (info) info.textContent = 'Lokasi membutuhkan HTTPS/localhost — buka aplikasi via koneksi aman agar GPS aktif.';
-    return Promise.resolve(null);
-  }
-  if (info) info.textContent = 'Mengambil titik lokasi…';
-  return new Promise(resolve => {
-    try {
-      navigator.geolocation.getCurrentPosition(pos => {
-        state.userLat = pos.coords.latitude;
-        state.userLng = pos.coords.longitude;
-    if (info) {
-      info.textContent = 'Lokasi: ' + state.userLat.toFixed(6) + ', ' + state.userLng.toFixed(6) +
-        ' (±' + Math.round(pos.coords.accuracy || 0) + ' m)';
-    }
-    if (state.map && typeof L !== 'undefined') {
-      if (!state.markerUser) {
-        state.markerUser = L.marker([state.userLat, state.userLng]).addTo(state.map).bindPopup('Posisi Anda');
-      } else {
-        state.markerUser.setLatLng([state.userLat, state.userLng]);
-      }
-      if (moveMap) state.map.setView([state.userLat, state.userLng], 16);
-    }
-    resolve(pos);
-  }, err => {
-    /* Jangan biarkan promise menggantung / uncaught — ini sumber error console. */
-    const msg = gpsErrorMessage(err);
-    if (info) info.textContent = msg;
-    resolve(null);
-  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
-    } catch (e) {
-      if (info) info.textContent = gpsErrorMessage(e);
-      resolve(null);
-    }
-  });
+  /* Tidak ada lagi elemen gpsInfo/map (layar manual dihapus). Fungsi ini
+     dipertahankan sebagai stub agar kode lama tidak error. */
+  return Promise.resolve(null);
 }
 
 function initMapJadwal() {
@@ -938,53 +900,12 @@ function haversine(lat1, lon1, lat2, lon2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-/* ---------- 16. PRESENSI MANUAL (GPS) ---------------------------------- */
+/* ---------- 16. SIMPAN PRESENSI (QR) ---------------------------------- */
 function savePresensi(pres) {
   state.presensi.push(pres);
   saveLocal();
   enqueue('presensi', pres);
   return pres;
-}
-
-function submitManual() {
-  const sesiId = $('manualSesi').value;
-  const status = $('manualStatus').value;
-  const ket = $('manualKeterangan').value.trim();
-
-  if (!sesiId) { toast('Pilih sesi acara terlebih dahulu', 'error'); return; }
-  const j = state.jadwal.find(x => x.id === sesiId);
-  if (!j) { toast('Sesi tidak ditemukan', 'error'); return; }
-
-  if (state.presensi.some(p => p.userId === state.currentUser.id && p.jadwalId === sesiId)) {
-    toast('Anda sudah presensi pada sesi ini', 'error');
-    return;
-  }
-  if (state.userLat == null) {
-    toast('Titik GPS belum siap — tekan "Perbarui Lokasi" lalu coba lagi', 'error');
-    return;
-  }
-
-  const dist = haversine(state.userLat, state.userLng, j.lat, j.lng);
-  const now = new Date().toISOString();
-  savePresensi({
-    id: uid(),
-    userId: state.currentUser.id,
-    userName: state.currentUser.nama,
-    jadwalId: j.id,
-    jadwalNama: j.nama,
-    venue: j.venue,
-    status: status,
-    keterangan: ket,
-    metode: 'manual',
-    lat: state.userLat,
-    lng: state.userLng,
-    distance: dist,
-    timestamp: now,
-    updatedAt: now
-  });
-  addLog('PRESENSI', { jadwalId: j.id, metode: 'manual', status: status, distance: Math.round(dist) });
-  $('manualKeterangan').value = '';
-  toast('Presensi tersimpan di perangkat — sinkron menyusul otomatis', 'success');
 }
 
 /* ---------- 17. PEMINDAI QR -------------------------------------------- */
@@ -1207,12 +1128,16 @@ async function onScanSuccess(decoded) {
 /* ---------- 18. RIWAYAT PRESENSI --------------------------------------- */
 function renderRiwayat() {
   const body = $('riwayatBody');
-  const mine = state.presensi
-    .filter(p => p.userId === state.currentUser.id)
+  const title = $('riwayatTitle');
+  const scope = $('riwayatScope');
+  const staffView = isStaff();
+  const mine = (staffView ? state.presensi.slice() : state.presensi.filter(p => p.userId === state.currentUser.id))
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  if (title) title.textContent = staffView ? 'Riwayat Presensi (Semua)' : 'Riwayat Presensi Saya';
+  if (scope) scope.textContent = staffView ? 'Seluruh presensi peserta — Admin & Pengurus (read-only).' : 'Presensi pribadi Anda.';
 
   if (!mine.length) {
-    body.innerHTML = '<tr><td colspan="4"><div class="empty">' + ic('codex', 'ic-lg') +
+    body.innerHTML = '<tr><td colspan="5"><div class="empty">' + ic('codex', 'ic-lg') +
       '<div>Belum ada riwayat presensi</div></div></td></tr>';
     return;
   }
@@ -1224,7 +1149,8 @@ function renderRiwayat() {
       <td data-label="Sesi">${esc(p.jadwalNama || '-')}
         <div class="tiny muted">${esc(p.venue || '')}</div></td>
       <td data-label="Status"><span class="badge badge-${esc(p.status)}">${esc(p.status)}</span></td>
-      <td data-label="Metode">${p.metode === 'qr' ? 'Pindai QR' : 'Presensi GPS'}</td>
+      <td data-label="Nama">${esc(p.userName || '-')}</td>
+      <td data-label="Metode">Pindai QR</td>
     </tr>`).join('');
 }
 
@@ -1287,7 +1213,7 @@ function renderLaporanAcara() {
   const r = laporanAcaraRows();
   if (!r.jadwal) {
     if (info) info.textContent = 'Pilih acara untuk melihat daftar hadir.';
-    body.innerHTML = '<tr><td colspan="7"><div class="empty">' + ic('bulla', 'ic-lg') +
+    body.innerHTML = '<tr><td colspan="8"><div class="empty">' + ic('bulla', 'ic-lg') +
       '<div>Belum ada acara dipilih</div></div></td></tr>';
     return;
   }
@@ -1297,7 +1223,7 @@ function renderLaporanAcara() {
     fmtDateTime(j.tanggal) + ' · ' + j.venue + ' · radius ' + j.radius +
     ' m · ' + nHadir + ' hadir / ' + r.rows.length + ' tercatat';
   if (!r.rows.length) {
-    body.innerHTML = '<tr><td colspan="7"><div class="empty">' + ic('codex', 'ic-lg') +
+    body.innerHTML = '<tr><td colspan="8"><div class="empty">' + ic('codex', 'ic-lg') +
       '<div>Belum ada presensi pada acara ini</div></div></td></tr>';
     return;
   }
@@ -1306,10 +1232,15 @@ function renderLaporanAcara() {
       <td data-label="Nama">${esc(p.userName || '-')}</td>
       <td data-label="Status"><span class="badge badge-${esc(p.status)}">${esc(p.status)}</span></td>
       <td data-label="Waktu">${esc(fmtDate(p.timestamp))}<div class="tiny muted">${esc(fmtTime(p.timestamp))}</div></td>
-      <td data-label="Metode">${p.metode === 'qr' ? 'Pindai QR' : 'GPS'}</td>
+      <td data-label="Metode">Pindai QR</td>
       <td data-label="Jarak">${(p.distance == null || isNaN(p.distance)) ? '-' : Number(p.distance).toFixed(0) + ' m'}</td>
       <td data-label="Ket.">${esc(p.keterangan || '')}</td>
+      ${isAdmin() ? `<td data-label="Kelola"><div class="row-tight">
+        <button class="btn btn-outline btn-sm" type="button" onclick="editPresensi('${esc(p.id)}')">${ic('quill')}Ubah</button>
+        <button class="btn btn-danger btn-sm" type="button" onclick="deletePresensi('${esc(p.id)}')">${ic('scrap')}Hapus</button>
+      </div></td>` : ''}
     </tr>`).join('');
+  applyRoleVisibility();
 }
 
 function csvCell(v) {
@@ -1347,7 +1278,7 @@ function exportLaporanCSV(mode) {
     head = ['No', 'Tanggal', 'Hari', 'Acara', 'Venue', 'Nama Peserta', 'Status',
       'Waktu Presensi', 'Metode', 'Jarak (m)', 'Keterangan'];
     lines = r.rows.map((p, i) => [i + 1, fmtDate(j.tanggal), hariID(j.tanggal), j.nama, j.venue,
-      p.userName, p.status, fmtDateTime(p.timestamp), p.metode === 'qr' ? 'Pindai QR' : 'GPS',
+      p.userName, p.status, fmtDateTime(p.timestamp), 'Pindai QR',
       (p.distance == null || isNaN(p.distance)) ? '' : Math.round(p.distance),
       p.keterangan || ''].map(csvCell).join(';'));
     fname = 'hadir_' + String(j.nama).replace(/\s+/g, '_') + '_' + String(j.tanggal).slice(0, 10) + '.csv';
@@ -1375,7 +1306,7 @@ function printLaporanAcara() {
   const rowsHtml = r.rows.map((p, i) =>
     '<tr><td>' + (i + 1) + '</td><td>' + esc(p.userName || '-') + '</td>' +
     '<td>' + esc(p.status) + '</td><td>' + esc(fmtDateTime(p.timestamp)) + '</td>' +
-    '<td>' + (p.metode === 'qr' ? 'Pindai QR' : 'GPS') + '</td>' +
+    '<td>Pindai QR</td>' +
     '<td>' + esc(p.keterangan || '-') + '</td></tr>').join('');
   const w = window.open('', '_blank', 'width=900,height=700');
   if (!w) { toast('Popup diblokir — izinkan popup untuk mencetak', 'error'); return; }
@@ -1402,6 +1333,65 @@ function printLaporanAcara() {
     '</body></html>');
   w.document.close();
   try { addLog('PRINT_LAPORAN', { jadwalId: j.id, nama: j.nama }); } catch (e) {}
+}
+
+/* ---------- 19b. KELOLA PRESENSI PER ACARA (HANYA ADMIN) -------------- */
+/* Pengurus: READ-ONLY (tombol Kelola disembunyikan). */
+function editPresensi(id) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat mengubah presensi', 'error'); return; }
+  const p = state.presensi.find(x => String(x.id) === String(id));
+  if (!p) { toast('Data presensi tidak ditemukan', 'error'); return; }
+  showModal('Ubah Presensi',
+    '<div class="form-group"><label>Status kehadiran</label>' +
+    '<select id="editPresStatus" class="form-control">' +
+    '<option value="hadir"' + (p.status === 'hadir' ? ' selected' : '') + '>Hadir</option>' +
+    '<option value="izin"' + (p.status === 'izin' ? ' selected' : '') + '>Izin</option>' +
+    '</select></div>' +
+    '<div class="form-group"><label>Keterangan</label>' +
+    '<input type="text" id="editPresKet" class="form-control" value="' + esc(p.keterangan || '') + '" /></div>' +
+    '<p class="tiny muted">' + esc(p.userName || '') + ' · ' + esc(fmtDateTime(p.timestamp)) + '</p>' +
+    '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Batal</button>' +
+    '<button class="btn btn-primary" onclick="saveEditPresensi(\'' + esc(p.id) + '\')">' + ic('seal') + 'Simpan</button></div>');
+}
+
+function saveEditPresensi(id) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat mengubah presensi', 'error'); return; }
+  const p = state.presensi.find(x => String(x.id) === String(id));
+  if (!p) { toast('Data presensi tidak ditemukan', 'error'); return; }
+  p.status = $('editPresStatus') ? $('editPresStatus').value : p.status;
+  p.keterangan = $('editPresKet') ? $('editPresKet').value.trim() : p.keterangan;
+  p.updatedAt = new Date().toISOString();
+  saveLocal();
+  enqueue('presensi', p);
+  addLog('UPDATE_PRESENSI', { presensiId: p.id, status: p.status });
+  closeModal();
+  renderLaporanAcara();
+  toast('Presensi diperbarui', 'success');
+}
+
+function deletePresensi(id) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat menghapus presensi', 'error'); return; }
+  const p = state.presensi.find(x => String(x.id) === String(id));
+  if (!p) { toast('Data presensi tidak ditemukan', 'error'); return; }
+  showModal('Hapus Presensi',
+    '<p>Hapus presensi <strong>' + esc(p.userName || '') + '</strong> pada <strong>' +
+    esc(p.jadwalNama || '') + '</strong> (' + esc(fmtDateTime(p.timestamp)) + ')?</p>' +
+    '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Batal</button>' +
+    '<button class="btn btn-danger" onclick="confirmDeletePresensi(\'' + esc(p.id) + '\')">' + ic('scrap') + 'Hapus</button></div>');
+}
+
+function confirmDeletePresensi(id) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat menghapus presensi', 'error'); return; }
+  const idx = state.presensi.findIndex(x => String(x.id) === String(id));
+  if (idx < 0) { toast('Data presensi tidak ditemukan', 'error'); return; }
+  const p = state.presensi[idx];
+  state.presensi.splice(idx, 1);
+  saveLocal();
+  queueDelete('presensi', id);
+  addLog('DELETE_PRESENSI', { presensiId: id, user: p.userName });
+  closeModal();
+  renderLaporanAcara();
+  toast('Presensi dihapus', 'success');
 }
 
 function generateLaporan() {
@@ -1834,8 +1824,14 @@ function printQR() {
   setTimeout(() => w.print(), 350);
 }
 
-/* ---------- 24. CATATAN AKTIVITAS (ADMIN & PENGURUS) ------------------- */
+/* ---------- 24. CATATAN AKTIVITAS (HANYA ADMIN) ------------------------ */
 function renderLog() {
+  if (!isAdmin()) {
+    const list = $('logList');
+    if (list) list.innerHTML = '<div class="empty">' + ic('ledger', 'ic-lg') +
+      '<div>Hanya Administrator yang dapat membuka log</div></div>';
+    return;
+  }
   const list = $('logList');
   if (!state.logs.length) {
     list.innerHTML = '<div class="empty">' + ic('ledger', 'ic-lg') + '<div>Belum ada catatan aktivitas</div></div>';
@@ -1851,8 +1847,41 @@ function renderLog() {
           ${l.details && l.details.nama ? '<span class="muted">· ' + esc(l.details.nama) + '</span>' : ''}
         </div>
         <div class="meta">${fmtDateTime(l.timestamp)}</div>
+        <div class="row-tight mt-6">
+          <button class="btn btn-danger btn-sm" type="button" onclick="deleteLog('${esc(l.id)}')">${ic('scrap')}Hapus</button>
+        </div>
       </div>
     </div>`).join('') + '</div>';
+}
+
+function deleteLog(id) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat menghapus log', 'error'); return; }
+  const idx = state.logs.findIndex(l => String(l.id) === String(id));
+  if (idx < 0) { toast('Log tidak ditemukan', 'error'); return; }
+  state.logs.splice(idx, 1);
+  saveLocal();
+  renderLog();
+  toast('Satu log dihapus dari tampilan', 'success');
+}
+
+function clearLogs(all) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat menghapus log', 'error'); return; }
+  if (!state.logs.length) { toast('Log sudah kosong', 'info'); return; }
+  showModal('Hapus Log',
+    '<p>Hapus <strong>seluruh ' + state.logs.length + ' catatan log</strong> dari tampilan peranti ini?</p>' +
+    '<p class="tiny muted">Catatan: log yang sudah terkirim ke server tidak ikut terhapus.</p>' +
+    '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Batal</button>' +
+    '<button class="btn btn-danger" onclick="confirmClearLogs()">' + ic('scrap') + 'Hapus Semua</button></div>');
+}
+
+function confirmClearLogs() {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat menghapus log', 'error'); return; }
+  state.logs = [];
+  saveLocal();
+  closeModal();
+  renderLog();
+  renderHome();
+  toast('Seluruh log dihapus dari tampilan', 'success');
 }
 /* ---------- 25. PENGATURAN -------------------------------------------- */
 function setText(id, txt) { const el = $(id); if (el) el.textContent = txt; }
@@ -1893,8 +1922,9 @@ function renderLainnya() {
   const note = $('lainnyaRoleNote');
   if (note) {
     note.textContent = isStaff()
-      ? 'Sebagai ' + roleName(u.role) + ' Anda dapat membuat jadwal & kode QR, serta membuka catatan aktivitas.'
-      : 'Sebagai Peserta Anda memindai QR / mempresensi GPS, melihat riwayat, dan mengelola profil pribadi.';
+      ? 'Sebagai ' + roleName(u.role) + ' Anda dapat membuat jadwal & kode QR.' +
+        (u.role === 'admin' ? ' Sebagai Administrator Anda juga membuka catatan aktivitas & mengelola presensi.' : '')
+      : 'Sebagai Peserta Anda memindai QR venue, melihat riwayat, dan mengelola profil pribadi.';
   }
 }
 
