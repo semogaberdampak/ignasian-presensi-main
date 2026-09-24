@@ -777,6 +777,19 @@ html:not([data-boot]) #bootVeil{display:none !important}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+  /* Bila CDN html5-qrcode gagal dimuat (luring / unpkg diblokir) tapi
+     BarcodeDetector bawaan ada (Chrome/Edge Android), pemindai kamera tetap
+     jalan via jalur native — jadi scan kamera tidak "mati total". */
+  window.addEventListener('load', function () {
+    if (typeof Html5Qrcode === 'undefined' && ('BarcodeDetector' in window)) {
+      try {
+        var h = document.getElementById('scanHint');
+        if (h) h.textContent = 'Mode pemindai bawaan siap (pustaka luring tidak termuat).';
+      } catch (e) {}
+    }
+  });
+</script>
 
 <!-- Jaring pengaman PALING AWAL (sebelum app.js): NotAllowedError dari API
      opsional (SW lama / Background Sync / IndexedDB di iframe) tidak boleh
@@ -817,6 +830,6 @@ html:not([data-boot]) #bootVeil{display:none !important}
 <!-- Database peranti (IndexedDB, luring lebih dahulu) lalu ikon kustom dan inti aplikasi -->
 <script src="js/db.js"></script>
 <script src="js/icons.js"></script>
-<script src="js/app.js?v=15"></script>
+<script src="js/app.js?v=16"></script>
 </body>
 </html>

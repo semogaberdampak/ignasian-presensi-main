@@ -9,7 +9,7 @@
    • Data ke Supabase tidak pernah di-cache (selalu daring) — IndexedDB di
      perangkat tetap menjadi salinan utama sehingga aplikasi aman luring.
    ========================================================================== */
-const VERSION = 'v15';
+const VERSION = 'v16';
 const SHELL_CACHE = 'ign-shell-' + VERSION;
 const RUNTIME_CACHE = 'ign-runtime-' + VERSION;
 

@@ -1250,10 +1250,6 @@ async function ensureScannerStopped() {
 }
 
 async function startScanner() {
-  if (typeof Html5Qrcode === 'undefined') {
-    toast('Pemindai QR belum termuat (peranti luring). Sambungkan ke internet sekali untuk menyimpannya.', 'error');
-    return;
-  }
   if (!window.isSecureContext) {
     toast('Buka aplikasi via HTTPS atau localhost — kamera diblokir pada koneksi tidak aman.', 'error');
     return;
@@ -1265,8 +1261,39 @@ async function startScanner() {
   $('scannerContainer').classList.remove('hidden');
   $('btnStartScan').classList.add('hidden');
   $('btnStopScan').classList.remove('hidden');
-  scanHint('Meminta izin kamera…');
+  /* Tes izin kamera LANGSUNG via getUserMedia sebelum memuat pustaka.
+     Ini membedakan 3 kasus yang sebelumnya tercampur jadi "tidak bekerja":
+     (a) izin ditolak / belum diklik Izinkan → NotAllowedError, beri instruksi;
+     (b) tidak ada kamera / dipakai app lain → beri pesan sesuai;
+     (c) kamera OK tapi pustaka CDN belum termuat (luring). */
+  let probeStream = null;
+  try {
+    scanHint('Meminta izin kamera…');
+    probeStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' }, audio: false
+    });
+  } catch (e) {
+    toast(scanErrorMessage(e), 'error');
+    try { addLog('SCAN_ERROR', { error: String((e && e.message) || e), stage: 'permission' }); } catch (e2) {}
+    await stopScanner();
+    return;
+  } finally {
+    try { if (probeStream && probeStream.getTracks) probeStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} }); } catch (e) {}
+    probeStream = null;
+  }
+  if (typeof Html5Qrcode === 'undefined') {
+    /* Kamera ADA & izin OK, hanya pustaka CDN belum tersimpan (luring).
+       Tawarkan jalur yang tetap jalan: BarcodeDetector bawaan bila ada,
+       kalau tidak arahkan ke "Pindai dari Foto" / "Ambil Foto". */
+    if (typeof BarcodeDetector !== 'undefined') {
+      toast('Pustaka pemindai belum termuat — memakai pemindai bawaan peramban…', 'info');
+      return startScannerNative();
+    }
+    toast('Pemindai QR belum termuat (peranti luring). Sambungkan ke internet sekali untuk menyimpannya, atau pakai "Ambil Foto QR dengan Kamera".', 'error');
+    return;
+  }
   await ensureScannerStopped();
+  scanHint('Membuka kamera…');
   /* qrbox lebih besar agar kode QR padat tetap tajam terbaca; BarcodeDetector
      bila tersedia (Android) — jauh lebih andal ketimbang penguraian JS. */
   const config = {
@@ -1307,19 +1334,104 @@ async function startScanner() {
     }
     throw lastErr || new Error('kamera tidak tersedia');
   } catch (e) {
+    /* html5-qrcode gagal walau izin kamera OK (kasus umum: "scan kamera tidak
+       bekerja sama sekali tapi scan dari galeri berhasil"). Jangan menyerah —
+       coba pemindai bawaan peramban yang memakai stream kamera yang sama. */
+    try { addLog('SCAN_ERROR', { error: String((e && e.message) || e), stage: 'html5' }); } catch (e2) {}
+    if (typeof BarcodeDetector !== 'undefined') {
+      toast('Pemindai utama gagal dibuka — mencoba pemindai bawaan…', 'info');
+      await ensureScannerStopped();
+      return startScannerNative();
+    }
     toast(scanErrorMessage(e), 'error');
-    try { addLog('SCAN_ERROR', { error: String((e && e.message) || e) }); } catch (e2) {}
     await stopScanner();
   }
 }
 
 async function stopScanner() {
   await ensureScannerStopped();
+  stopScannerNative();
   scanHint('Menyiapkan kamera…');
   if ($('scannerContainer')) {
     $('scannerContainer').classList.add('hidden');
     $('btnStartScan').classList.remove('hidden');
     $('btnStopScan').classList.add('hidden');
+  }
+}
+
+/* Pemindai bawaan peramban (BarcodeDetector + getUserMedia langsung, tanpa
+   pustaka CDN). Dipakai bila html5-qrcode belum termuat (luring) ATAU bila
+   html5-qrcode gagal start walau izin kamera OK — kasus "scan kamera tidak
+   bekerja sama sekali tapi scan dari galeri berhasil". */
+let _nativeScan = null;
+function stopScannerNative() {
+  try {
+    if (_nativeScan && _nativeScan.timer) clearInterval(_nativeScan.timer);
+  } catch (e) {}
+  try {
+    if (_nativeScan && _nativeScan.stream) {
+      _nativeScan.stream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+    }
+  } catch (e) {}
+  try {
+    if (_nativeScan && _nativeScan.video) _nativeScan.video.srcObject = null;
+  } catch (e) {}
+  _nativeScan = null;
+}
+
+async function startScannerNative() {
+  if (!('BarcodeDetector' in window)) {
+    toast('Peramban ini tidak mendukung pemindai bawaan. Pakai "Buka Galeri" atau "Ambil Foto QR".', 'error');
+    return;
+  }
+  try {
+    let formats = ['qr_code'];
+    try {
+      const supported = await BarcodeDetector.getSupportedFormats();
+      if (Array.isArray(supported) && supported.length) {
+        formats = supported.filter(f => /qr/i.test(f));
+        if (!formats.length) formats = supported;
+      }
+    } catch (e) { /* pakai bawaan qr_code */ }
+    const detector = new BarcodeDetector({ formats });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' }, audio: false
+    });
+    $('scannerContainer').classList.remove('hidden');
+    $('btnStartScan').classList.add('hidden');
+    $('btnStopScan').classList.remove('hidden');
+    const holder = $('qr-reader');
+    holder.innerHTML = '';
+    const video = document.createElement('video');
+    video.setAttribute('playsinline', 'true');
+    video.muted = true;
+    video.style.cssText = 'display:block;width:100%;max-height:340px;object-fit:cover;background:#000';
+    holder.appendChild(video);
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    scanHint('Arahkan kamera ke kode QR venue…');
+    try { addLog('START_SCAN', { mode: 'native' }); } catch (e) {}
+    let busy = false, done = false;
+    const timer = setInterval(async () => {
+      if (busy || done) return;
+      if (video.readyState < 2 || video.videoWidth < 2) return;
+      busy = true;
+      try {
+        const out = await detector.detect(video);
+        if (out && out.length && out[0].rawValue) {
+          done = true;
+          clearInterval(timer);
+          stopScannerNative();
+          await onScanSuccess(out[0].rawValue);
+        }
+      } catch (e) { /* bingkai rusak — coba bingkai berikut */ }
+      busy = false;
+    }, 350);
+    _nativeScan = { stream, video, timer };
+  } catch (e) {
+    toast(scanErrorMessage(e), 'error');
+    try { addLog('SCAN_ERROR', { error: String((e && e.message) || e), stage: 'native' }); } catch (e2) {}
+    await stopScanner();
   }
 }
 
