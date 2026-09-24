@@ -26,6 +26,13 @@
 <link rel="stylesheet" href="css/components.css" />
 <link rel="stylesheet" href="css/pages.css" />
 <link rel="stylesheet" href="css/utilities.css" />
+<style>
+/* Pengaman inline (tidak tergantung cache CSS/service worker):
+   #bootVeil memakai style="display:flex" inline, jadi HANYA bisa dikalahkan
+   oleh !important. Bila utilities.css lama masih di-cache, aturan ini tetap
+   menyembunyikan selubung setelah data-boot dilepas. */
+html:not([data-boot]) #bootVeil{display:none !important}
+</style>
 
 <script>
 /* Tema awal mengikuti preferensi sistem agar tidak berkedip.
@@ -39,8 +46,18 @@
   var root = document.documentElement;
   root.setAttribute('data-boot', '1');
   /* Selubung pengaman: bila aplikasi tidak selesai menyiapkan diri (mis. JS
-     gagal), selubung dilepas agar layar tidak terkunci. */
-  setTimeout(function () { try { root.removeAttribute('data-boot'); } catch (e) {} }, 6000);
+     gagal / CSS lama dari cache), selubung dilepas PAKSA agar layar tidak
+     terkunci. Hapus atribut data-boot SEKALIGUS sembunyikan #bootVeil via
+     inline style — karena veil memakai style="display:flex" inline, hanya
+     menghapus atribut tidak cukup bila CSS lama (tanpa !important) masih
+     dipakai dari cache service worker. */
+  setTimeout(function () {
+    try { root.removeAttribute('data-boot'); } catch (e) {}
+    try {
+      var v = document.getElementById('bootVeil');
+      if (v) { v.style.cssText = 'display:none !important'; v.setAttribute('aria-hidden', 'true'); }
+    } catch (e2) {}
+  }, 5000);
   try {
     var t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
     root.setAttribute('data-theme', t);
@@ -83,9 +100,13 @@
 <body>
 
 <!-- Selubung awal: menutup layar sampai aplikasi selesai memeriksa sesi,
-     sehingga pengguna tidak melihat kedipan "dialihkan ke halaman login". -->
+     sehingga pengguna tidak melihat kedipan "dialihkan ke halaman login".
+     CATATAN: JANGAN taruh display:flex inline di sini — inline style
+     mengalahkan CSS (html:not([data-boot]) .boot-veil{display:none}) sehingga
+     selubung macet bila CSS lama masih di-cache. Flex sudah diatur di
+     css/utilities.css (.boot-veil). -->
 <div id="bootVeil" class="boot-veil" aria-hidden="true"
-     style="position:fixed;inset:0;z-index:1200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--head-bg,#6E2632)">
+     style="position:fixed;inset:0;z-index:1200;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--head-bg,#6E2632)">
   <div class="login-crest">IHS</div>
   <p class="login-foot">Ad Maiorem Dei Gloriam</p>
 </div>
@@ -757,6 +778,38 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
+<!-- Jaring pengaman PALING AWAL (sebelum app.js): NotAllowedError dari API
+     opsional (SW lama / Background Sync / IndexedDB di iframe) tidak boleh
+     jadi "Uncaught (in promise)". Dipasang di sini agar rejection yang
+     terjadi SEBELUM app.js dimuat pun tertangkap — termasuk dari SW lama
+     (v13/v14) yang masih menguasai halaman sebelum v15 aktif. -->
+<script>
+(function () {
+  function isIgnorable(r) {
+    try {
+      var name = r && r.name;
+      var msg = String((r && (r.message || r)) || '');
+      return name === 'NotAllowedError' || name === 'SecurityError' ||
+        name === 'NotSupportedError' || /permission denied|not allowed/i.test(msg);
+    } catch (e) { return false; }
+  }
+  window.addEventListener('unhandledrejection', function (ev) {
+    if (isIgnorable(ev && ev.reason)) {
+      try { ev.preventDefault(); } catch (e) {}
+    }
+  });
+  /* Paksa lepas selubung dari luar app.js: bila app.js gagal total (parse
+     error / 404 dari cache), timer ini tetap melepas layar IHS. */
+  setTimeout(function () {
+    try { document.documentElement.removeAttribute('data-boot'); } catch (e) {}
+    try {
+      var v = document.getElementById('bootVeil');
+      if (v) { v.style.display = 'none'; v.setAttribute('aria-hidden', 'true'); }
+    } catch (e2) {}
+  }, 5000);
+})();
+</script>
+
 <!-- Konfigurasi layanan (Supabase) lalu lapisan data basis data -->
 <script src="js/config.js"></script>
 <script src="js/supabase.js"></script>
@@ -764,6 +817,6 @@
 <!-- Database peranti (IndexedDB, luring lebih dahulu) lalu ikon kustom dan inti aplikasi -->
 <script src="js/db.js"></script>
 <script src="js/icons.js"></script>
-<script src="js/app.js"></script>
+<script src="js/app.js?v=15"></script>
 </body>
 </html>

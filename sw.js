@@ -9,7 +9,7 @@
    • Data ke Supabase tidak pernah di-cache (selalu daring) — IndexedDB di
      perangkat tetap menjadi salinan utama sehingga aplikasi aman luring.
    ========================================================================== */
-const VERSION = 'v13';
+const VERSION = 'v15';
 const SHELL_CACHE = 'ign-shell-' + VERSION;
 const RUNTIME_CACHE = 'ign-runtime-' + VERSION;
 
@@ -90,6 +90,17 @@ async function networkFirst(req) {
 }
 
 async function cacheFirst(req) {
+  /* Ganti nama berkas (app.v15.js dst.) selalu diambil baru — jangan sajikan
+     versi lama dari cache. */
+  try {
+    const u = new URL(req.url);
+    if (/\.(v\d+|min)\.js$/.test(u.pathname) || /[?&]v=\d+/.test(u.search)) {
+      const cache = await caches.open(SHELL_CACHE);
+      const res = await fetch(req);
+      if (res && res.ok) cache.put(req, res.clone());
+      return res;
+    }
+  } catch (e) { /* lanjut ke cache biasa */ }
   const hit = await caches.match(req, { ignoreSearch: true });
   if (hit) {
     revalidate(SHELL_CACHE, req);

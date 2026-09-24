@@ -64,6 +64,22 @@ let state = {
 /* ---------- 3. UTILITAS -------------------------------------------------- */
 const $ = id => document.getElementById(id);
 
+/* Jaring pengaman global: NotAllowedError / SecurityError dari API opsional
+   (Background Sync, SW, kamera, dsb. — umum bila dibuka via file:// atau
+   tanpa izin) TIDAK BOLEH menjadi "Uncaught (in promise)" yang menghentikan
+   alur boot. Penanganan khusus tetap di tempatnya; ini hanya jaring terakhir. */
+try {
+  window.addEventListener('unhandledrejection', ev => {
+    const r = ev && ev.reason;
+    const name = r && (r.name || '');
+    const msg = String((r && (r.message || r)) || '');
+    if (name === 'NotAllowedError' || name === 'SecurityError' ||
+        name === 'NotSupportedError' || /permission denied|not allowed/i.test(msg)) {
+      try { ev.preventDefault(); } catch (e) {}
+    }
+  });
+} catch (e) { /* abaikan */ }
+
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -511,30 +527,37 @@ function updateSyncUI(stateOverride) {
 /* Pemicu sinkron: kembali daring, kembali ke aplikasi, berkala, dan dari SW.
    Semua berjalan senyap di latar belakang — tanpa toast & tanpa bilah. */
 function setupConnectivity() {
-  window.addEventListener('online', () => syncNow(false));
-  window.addEventListener('offline', () => updateSyncUI());
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && state.currentUser) syncNow(false);
-  });
-  setInterval(() => { if (state.currentUser) syncNow(false); }, CONFIG.SYNC_INTERVAL);
+  try { window.addEventListener('online', () => syncNow(false)); } catch (e) {}
+  try { window.addEventListener('offline', () => updateSyncUI()); } catch (e) {}
+  try {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && state.currentUser) syncNow(false);
+    });
+  } catch (e) {}
+  try { setInterval(() => { if (state.currentUser) syncNow(false); }, CONFIG.SYNC_INTERVAL); } catch (e) {}
 
-  if ('serviceWorker' in navigator) {
+  /* Service worker + Background Sync hanya di konteks aman (https/localhost).
+     Dibuka via file:// (double-click) atau http biasa tanpa izin → API ini
+     melempar NotAllowedError/SecurityError. Bungkus total agar TIDAK PERNAH
+     menjadi "Uncaught (in promise)". */
+  try {
+    const isFile = location.protocol === 'file:';
+    if (isFile || !window.isSecureContext) return;
+    if (!('serviceWorker' in navigator)) return;
     navigator.serviceWorker.addEventListener('message', ev => {
       if (ev.data && ev.data.type === 'flush-outbox') syncNow(false);
     });
     navigator.serviceWorker.register('sw.js').then(reg => {
-      /* register() mengembalikan Promise — try/catch saja TIDAK menangkap
-         penolakan async (NotAllowedError: Permission denied di mode
-         emulator/HTTP/tanpa izin) sehingga muncul "Uncaught (in promise)".
-         Wajib .catch(). */
-      if ('sync' in reg) {
-        try {
-          var p = reg.sync.register('ign-outbox');
-          if (p && p.catch) p.catch(() => { /* sinkron latar opsional — abaikan */ });
-        } catch (e) { /* opsional */ }
-      }
+      try {
+        if (reg && reg.sync && typeof reg.sync.register === 'function') {
+          const p = reg.sync.register('ign-outbox');
+          if (p && typeof p.then === 'function') {
+            p.then(() => {}, () => { /* izin sync ditolak — abaikan, sinkron manual tetap jalan */ });
+          }
+        }
+      } catch (e) { /* izin ditolak sinkron — abaikan */ }
     }).catch(e => console.warn('Service worker gagal didaftarkan', e));
-  }
+  } catch (e) { /* abaikan */ }
 }
 /* ---------- 9. CATATAN AUDIT (hanya dilihat ADMIN & PENGURUS) ------------ */
 function addLog(action, details, userId) {
@@ -783,6 +806,10 @@ function showLoginScreen() {
   const ma = $('mainApp');
   if (ls) ls.classList.remove('hidden');
   if (ma) ma.classList.add('hidden');
+  /* WAJIB: jalur tanpa sesi (pengguna baru / sesi habis) juga harus melepas
+     selubung. Sebelumnya hanya showMainApp() yang memanggil endBoot(),
+     sehingga layar login macet di logo IHS selamanya. */
+  try { endBoot(); } catch (e) { /* abaikan */ }
 }
 /* ---------- 12. NAVIGASI ------------------------------------------------- */
 const NAV_GROUPS = {
@@ -3070,8 +3097,7 @@ async function init() {
   }
   } catch (fatalErr) {
     console.warn('init() gagal sebagian — tetap tampil agar tidak macet:', fatalErr);
-    try { selectById('loginTabUser', 'loginTabs'); } catch (e2) {}
-    try { showLogin(); } catch (e2) {}
+    try { showLoginScreen(); } catch (e2) {}
   } finally {
     _releaseBootOnce();
   }
