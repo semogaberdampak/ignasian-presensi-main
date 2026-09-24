@@ -468,6 +468,9 @@ html:not([data-boot]) #bootVeil{display:none !important}
             <span class="ic" data-ic="descend"></span>Muat Ulang Data Perangkat
           </button>
         </div>
+        <p class="tiny muted mt-10" id="syncAutoNote">
+          Sinkronisasi berjalan otomatis: setiap perubahan dari semua pengguna diterima lewat saluran realtime, antrean Anda terkirim begitu daring, dan penarikan berkala tetap berjalan sebagai cadangan. Tombol di atas hanya untuk memaksa sinkron saat itu juga.
+        </p>
         <div class="btn-row mt-10">
           <button class="btn btn-gold btn-sm" type="button" onclick="testSupabase()">
             <span class="ic" data-ic="compass"></span>Uji Koneksi Database
@@ -636,15 +639,22 @@ html:not([data-boot]) #bootVeil{display:none !important}
 
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="halopair"></span>Manajemen Data Peserta</div>
-        <button class="btn btn-gold btn-sm mb-14" type="button" onclick="showPage('registrasi')">
-          <span class="ic" data-ic="quill"></span>Tambah Pengguna Baru
-        </button>
-        <button class="btn btn-outline btn-sm mb-14" type="button" onclick="showAllPasswords()">
-          <span class="ic" data-ic="eye"></span>Lihat Semua Password Akun
-        </button>
+        <p class="card-sub">Kelola akun peserta, pengurus, dan administrator. Perubahan tersimpan otomatis dan tersinkron ke semua perangkat.</p>
+        <div class="users-toolbar">
+          <button class="btn btn-gold btn-sm" type="button" onclick="showPage('registrasi')">
+            <span class="ic" data-ic="quill"></span><span>Tambah Pengguna Baru</span>
+          </button>
+          <button class="btn btn-outline btn-sm" type="button" onclick="showAllPasswords()">
+            <span class="ic" data-ic="eye"></span><span>Lihat Semua Password Akun</span>
+          </button>
+        </div>
+        <p class="tiny muted users-syncnote" id="usersSyncNote">Menampilkan data terbaru di perangkat ini — diperbarui otomatis saat ada perubahan.</p>
+        <div class="form-group users-search">
+          <input type="search" id="userSearchInput" class="form-control" placeholder="Cari nama / username / peran…" autocomplete="off" oninput="renderUsers()" />
+        </div>
         <div class="table-wrap">
-          <table class="responsive">
-            <thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Password</th><th>Tindakan</th></tr></thead>
+          <table class="responsive users-table">
+            <thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Password</th><th class="col-act">Tindakan</th></tr></thead>
             <tbody id="usersBody"></tbody>
           </table>
         </div>

@@ -524,17 +524,22 @@ function updateSyncUI(stateOverride) {
   if ($('page-pengaturan') && !$('page-pengaturan').classList.contains('hidden')) renderSettingsSync();
 }
 
-/* Pemicu sinkron: kembali daring, kembali ke aplikasi, berkala, dan dari SW.
-   Semua berjalan senyap di latar belakang — tanpa toast & tanpa bilah. */
+/* Pemicu sinkron: kembali daring, kembali ke aplikasi, berkala, realtime
+   antar-pengguna, dan dari SW. Semua berjalan senyap di latar belakang —
+   tanpa toast & tanpa bilah. */
 function setupConnectivity() {
-  try { window.addEventListener('online', () => syncNow(false)); } catch (e) {}
+  try { window.addEventListener('online', () => { syncNow(false); scheduleRealtimeCatchup(); }); } catch (e) {}
   try { window.addEventListener('offline', () => updateSyncUI()); } catch (e) {}
   try {
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && state.currentUser) syncNow(false);
+      if (!document.hidden && state.currentUser) { syncNow(false); scheduleRealtimeCatchup(); }
     });
   } catch (e) {}
   try { setInterval(() => { if (state.currentUser) syncNow(false); }, CONFIG.SYNC_INTERVAL); } catch (e) {}
+  /* Saluran Realtime dinyalakan SEKALI di sini (bukan per-login) + setiap
+     login/logout memperbarui visibilitas kartu sinkron (beberapa tombol
+     hanya admin, tapi realtime + syncNow latar jalan untuk SEMUA peran). */
+  try { scheduleRealtimeCatchup(); } catch (e) {}
 
   /* Service worker + Background Sync hanya di konteks aman (https/localhost).
      Dibuka via file:// (double-click) atau http biasa tanpa izin → API ini
@@ -559,6 +564,15 @@ function setupConnectivity() {
     }).catch(e => console.warn('Service worker gagal didaftarkan', e));
   } catch (e) { /* abaikan */ }
 }
+/* Menyalakan Saluran Realtime saat: sudah login + daring + Supabase siap.
+   Dipanggil dari login/logout/online/focus, jadi admin TIDAK perlu menekan
+   tombol apa pun — perubahan dari semua pengguna masuk otomatis. */
+function scheduleRealtimeCatchup() {
+  try {
+    if (typeof startSupaRealtime === 'function') startSupaRealtime();
+  } catch (e) {}
+}
+
 /* ---------- 9. CATATAN AUDIT (hanya dilihat ADMIN & PENGURUS) ------------ */
 function addLog(action, details, userId) {
   const now = new Date().toISOString();
@@ -666,6 +680,7 @@ async function doLogin() {
     addLog('LOGIN', { username: user.username, masaBerlaku: fmtDurasi(sessionTtlMs(user)) });
     toast('Selamat datang, ' + user.nama + '!', 'success');
     showMainApp('home');
+    try { scheduleRealtimeCatchup(); } catch (e) {}
   } finally {
     if (btn) { btn.disabled = false; if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
   }
@@ -2166,46 +2181,79 @@ function togglePassword(id) {
   try { addLog('VIEW_PASSWORD', { userId: u.id, username: u.username }); } catch (e) { /* abaikan */ }
 }
 
+function sidOf(id) { return String(id == null ? '' : id).replace(/[^a-zA-Z0-9_-]/g, ''); }
+
+/* Petakan kembali id yang "disalurkan" (sanitasi DOM) ke id asli —
+   uid() hanya memakai [a-z0-9] jadi aman, tapi pemetaan ini membuat
+   toggle/hapus/lihat-password tetap benar walau id mengandung spasi,
+   @, /, dsb. (mis. data lama / impor manual). */
+function findUserBySid(sid) {
+  sid = String(sid || '');
+  return (state.users || []).find(u => u && (u.id === sid || sidOf(u.id) === sid)) || null;
+}
+
 /* ---------- 20. MANAJEMEN PESERTA (ADMIN) ------------------------------ */
 function renderUsers() {
   const body = $('usersBody');
+  if (!body) return;
+  const q = String($('userSearchInput') ? $('userSearchInput').value : '').trim().toLowerCase();
+  const list = !q ? state.users : state.users.filter(u =>
+    String(u.nama || '').toLowerCase().includes(q) ||
+    String(u.username || '').toLowerCase().includes(q) ||
+    String(roleName(u.role) || '').toLowerCase().includes(q));
   if (!state.users.length) {
     body.innerHTML = '<tr><td colspan="5"><div class="empty">' + ic('halopair', 'ic-lg') +
       '<div>Belum ada pengguna</div></div></td></tr>';
     return;
   }
-  body.innerHTML = state.users.map(u => `
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="5"><div class="empty">' + ic('compass', 'ic-lg') +
+      '<div>Tidak ada yang cocok dengan pencarian</div></div></td></tr>';
+    return;
+  }
+  body.innerHTML = list.map(u => {
+    const sid = sidOf(u.id);
+    return `
     <tr>
-      <td data-label="Nama">${esc(u.nama)}
-        <div class="tiny muted">@${esc(u.username)}</div></td>
-      <td data-label="Peran"><span class="badge badge-role">${esc(roleName(u.role))}</span></td>
-      <td data-label="Status"><span class="badge badge-${esc(u.status)}">${esc(u.status)}</span></td>
+      <td data-label="Nama"><div class="u-ident"><span class="u-ava" aria-hidden="true">${esc((u.nama || u.username || '?').trim().charAt(0).toUpperCase())}</span><span class="u-id"><strong class="u-name">${esc(u.nama)}</strong><span class="tiny muted u-user">@${esc(u.username)}</span></span></div></td>
+      <td data-label="Peran"><span class="u-badges"><span class="badge badge-role">${esc(roleName(u.role))}</span></span></td>
+      <td data-label="Status"><span class="u-badges"><span class="badge badge-${esc(u.status)}">${esc(u.status)}</span></span></td>
       <td data-label="Password">
-        <span class="pw-cell${u.passPlain ? ' pw-hidden' : ''}" id="pw-${esc(u.id)}">${
+        <span class="pw-cell${u.passPlain ? ' pw-hidden' : ''}" id="pw-${sid}">${
           u.passPlain ? '••••••••' : '<span class="tiny muted">belum tercatat</span>'}</span>
-        <div class="row-tight mt-6">
-          ${u.passPlain ? `<button class="btn btn-outline btn-sm" type="button" onclick="togglePassword('${esc(u.id)}')">
+        <div class="u-pw-actions mt-6">
+          ${u.passPlain ? `<button class="btn btn-outline btn-sm" type="button" data-act="pw" data-id="${sid}">
             ${ic('eye')}<span>Lihat</span>
           </button>` : ''}
-          <button class="btn btn-ghost btn-sm" type="button" onclick="showResetPassword('${esc(u.id)}')">
+          <button class="btn btn-ghost btn-sm" type="button" data-act="reset" data-id="${sid}">
             ${ic('keyring')}Atur Ulang
           </button>
         </div>
       </td>
       <td data-label="Tindakan">
-        <div class="row-tight">
-          <button class="btn btn-outline btn-sm" onclick="toggleUser('${esc(u.id)}')">
-            ${ic(u.status === 'aktif' ? 'lamp' : 'lampoff')}${u.status === 'aktif' ? 'Nonaktifkan' : 'Aktifkan'}
+        <div class="u-actions">
+          <button class="btn btn-outline btn-sm u-act" type="button" data-act="toggle" data-id="${sid}">
+            ${ic(u.status === 'aktif' ? 'lamp' : 'lampoff')}<span>${u.status === 'aktif' ? 'Nonaktifkan' : 'Aktifkan'}</span>
           </button>
-          ${u.hpPlain ? `<button class="btn btn-gold btn-sm" type="button" onclick="waTo('${esc(u.hpPlain)}', '')">
-            ${ic('wa')}WhatsApp
-          </button>` : ''}
-          ${u.id !== state.currentUser.id
-      ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${esc(u.id)}')">${ic('scrap')}Hapus</button>`
+          ${u.id !== (state.currentUser && state.currentUser.id)
+      ? `<button class="btn btn-danger btn-sm u-act" type="button" data-act="del" data-id="${sid}">${ic('scrap')}<span>Hapus</span></button>`
       : ''}
         </div>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+  try {
+    body.querySelectorAll('button[data-act]').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.getAttribute('data-id');
+        const act = b.getAttribute('data-act');
+        if (act === 'pw') togglePassword(id);
+        else if (act === 'reset') showResetPassword(id);
+        else if (act === 'toggle') toggleUser(id);
+        else if (act === 'del') deleteUser(id);
+      });
+    });
+  } catch (e) {}
 }
 
 async function registerUser() {

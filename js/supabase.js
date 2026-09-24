@@ -89,6 +89,10 @@ const SUPA_OUTBOX_TABLES = {
   request: 'requests'
 };
 
+/* Realtime dinyalakan dari js/app.js (scheduleRealtimeCatchup) agar hanya
+   SATU saluran per perangkat walau Supabase dipakai dari banyak tempat.
+   Modul ini hanya menyediakan pemicu + pengatur waktu debounce. */
+
 /* ---------- Konfigurasi & kesiapan ---------------------------------------- */
 
 function supaConfig() {
@@ -334,6 +338,125 @@ async function supaPullAll(opts) {
 }
 
 /* ---------- Diagnostik (menu Pengaturan) --------------------------------- */
+
+/* ---------- Sinkron otomatis antar pengguna (Supabase Realtime) --------------
+   Tanpa ini setiap perangkat hanya menarik data tiap SYNC_INTERVAL / saat
+   tombol "Sinkronisasi Sekarang" ditekan. Dengan Realtime, begitu ADA
+   perubahan di tabel mana pun (dari pengguna lain), server mendorong
+   peristiwa ke semua perangkat yang daring → perangkat langsung
+   menarik ulang (debounce) sehingga "setiap ada perubahan dari semua user"
+   tersinkron otomatis. Bila Realtime tidak tersedia / gagal, aplikasi
+   tetap memakai polling lama — tidak ada yang rusak.
+
+   Cara kerja: memakai protokol Phoenix (websocket Supabase Realtime v1)
+   dengan benar — access_token + postgres_changes binding. Tanpa binding,
+   server tidak akan mengirim peristiwa perubahan baris. */
+let _supaRt = { ws: null, timer: 0, backoff: 1000, started: false, ref: 0, hb: 0 };
+function scheduleRealtimePull(reason, immediate) {
+  try {
+    if (_supaRt.timer) clearTimeout(_supaRt.timer);
+  } catch (e) {}
+  _supaRt.timer = setTimeout(() => {
+    _supaRt.timer = 0;
+    try {
+      if (!state.currentUser || !isOnline()) return;
+      syncNow(false);
+    } catch (e) {}
+  }, immediate ? 300 : 1200);
+  try {
+    const el = document.getElementById('usersSyncNote');
+    if (el && reason) el.textContent = 'Perubahan baru diterima — memperbarui…';
+  } catch (e) {}
+}
+function stopSupaRealtime() {
+  try {
+    if (_supaRt.timer) clearTimeout(_supaRt.timer);
+  } catch (e) {}
+  _supaRt.timer = 0;
+  try {
+    if (_supaRt.hb) clearInterval(_supaRt.hb);
+  } catch (e) {}
+  _supaRt.hb = 0;
+  try {
+    if (_supaRt.ws) _supaRt.ws.close();
+  } catch (e) {}
+  _supaRt.ws = null;
+}
+function startSupaRealtime() {
+  if (_supaRt.started) return;
+  _supaRt.started = true;
+  const nextRef = () => String(++_supaRt.ref);
+  const loop = () => {
+    setTimeout(connect, _supaRt.backoff);
+  };
+  const joinTable = (ws, table) =>
+    ws.send(JSON.stringify({
+      topic: 'realtime:' + table,
+      event: 'phx_join',
+      payload: {
+        access_token: supaConfig().SUPABASE_ANON_KEY,
+        config: {
+          broadcast: { ack: false, self: false },
+          presence: { key: '' },
+          postgres_changes: [{ event: '*', schema: supaConfig().SUPABASE_SCHEMA || 'public', table: table }]
+        }
+      },
+      ref: nextRef()
+    }));
+  const connect = async () => {
+    try {
+      if (!supaReady() || !isOnline() || typeof WebSocket === 'undefined') return loop();
+      if (_supaRt.ws) return loop();
+      const c = supaConfig();
+      const base = String(c.SUPABASE_URL).replace(/\/+$/, '').replace(/^http/, 'ws');
+      const url = base + '/realtime/v1/websocket?apikey=' + encodeURIComponent(c.SUPABASE_ANON_KEY) +
+        '&vsn=1.0.0';
+      const ws = new WebSocket(url);
+      _supaRt.ws = ws;
+      const tables = ['users', 'jadwal', 'presensi', 'password_requests'];
+      ws.onopen = () => {
+        _supaRt.backoff = 1000;
+        try { tables.forEach(t => joinTable(ws, t)); } catch (e) {}
+        try {
+          if (_supaRt.hb) clearInterval(_supaRt.hb);
+          _supaRt.hb = setInterval(() => {
+            try {
+              if (ws.readyState === 1) {
+                ws.send(JSON.stringify({
+                  topic: 'phoenix', event: 'heartbeat', payload: {}, ref: nextRef()
+                }));
+              }
+            } catch (e) {}
+          }, 25000);
+        } catch (e) {}
+      };
+      ws.onmessage = ev => {
+        let msg = null;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        const evt = msg && msg.event ? String(msg.event) : '';
+        const topic = msg && msg.topic ? String(msg.topic) : '';
+        if (evt === 'postgres_changes' || evt === 'INSERT' || evt === 'UPDATE' || evt === 'DELETE') {
+          scheduleRealtimePull(topic || evt, false);
+        } else if (evt === 'phx_reply' && msg.payload && msg.payload.status === 'ok' &&
+                   topic.indexOf('realtime:') === 0) {
+          /* Berhasil gabung — tarik sekali agar langsung sejajar dengan server. */
+          scheduleRealtimePull('', true);
+        }
+      };
+      ws.onerror = () => { try { ws.close(); } catch (e) {} };
+      ws.onclose = () => {
+        try { if (_supaRt.hb) clearInterval(_supaRt.hb); } catch (e) {}
+        _supaRt.hb = 0;
+        _supaRt.ws = null;
+        _supaRt.backoff = Math.min(60000, (_supaRt.backoff || 1000) * 2);
+        loop();
+      };
+    } catch (e) { loop(); }
+  };
+  try { window.addEventListener('online', () => { _supaRt.backoff = 1000; connect(); }); } catch (e) {}
+  try { window.addEventListener('offline', () => stopSupaRealtime()); } catch (e) {}
+  connect();
+}
 
 /* Hitung jumlah baris satu tabel memakai tajuk Content-Range */
 async function supaCount(coll) {

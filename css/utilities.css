@@ -86,12 +86,65 @@ html[data-boot] body{overflow:hidden}
 .pick-item .tail .btn{margin:0}
 
 /* Kata sandi pada tabel Administrator */
-.pw-cell{font-family:'Cascadia Mono',Consolas,'Courier New',monospace;font-size:.86rem;letter-spacing:.02em}
+.pw-cell{font-family:'Cascadia Mono',Consolas,'Courier New',monospace;font-size:.86rem;letter-spacing:.02em;overflow-wrap:anywhere}
 .pw-hidden{color:var(--muted);letter-spacing:.18em}
-.wa-box{
-  background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);
-  padding:10px 12px;margin-top:8px;word-break:break-word;
-  font-family:'Cascadia Mono',Consolas,'Courier New',monospace;font-size:.82rem;
+
+/* ---------- 19c. MANAJEMEN DATA PESERTA (responsif) --------------------------
+   HP kecil (<620px): seluruh tabel berubah menjadi KARTU (aturan .responsive
+   di atas sudah mengubah tr/td jadi blok). Aturan di sini hanya merapikan
+   kartu tsb: avatar tetap sebaris, lencana sejajar, dan 3 tombol aksi menjadi
+   grid 2 kolom yang TIDAK terpotong (masalah pada tangkapan layar: tombol
+   "NONAKTIFKAN" terpotong di tepi kanan).
+   Tablet (621–900px): tabel boleh scroll horizontal dengan aman.
+   Desktop (>900px) : kolom Tindakan rata kanan, tombol rapat satu baris. */
+.users-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.users-toolbar .btn{width:auto;flex:1 1 200px}
+.u-ident{display:flex;align-items:center;gap:10px;min-width:0;max-width:100%}
+.u-ava{
+  flex:0 0 auto;width:34px;height:34px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-display);font-weight:700;font-size:.9rem;
+  color:#FBF6EC;background:linear-gradient(160deg,#7A2C39,#571D27);
+  border:1px solid var(--gold);
+}
+[data-theme='dark'] .u-ava{color:#241A08;background:linear-gradient(160deg,var(--gold-2),var(--gold))}
+.u-id{display:flex;flex-direction:column;min-width:0;flex:1}
+.u-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.98rem}
+.u-user{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.u-badges{display:flex;flex-wrap:wrap;gap:6px}
+.u-pw-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.u-pw-actions .btn{width:auto;flex:0 1 auto}
+.u-actions{display:flex;flex-wrap:wrap;gap:6px;max-width:100%}
+.u-actions .u-act{flex:0 1 auto;white-space:nowrap;min-width:0}
+.u-actions .u-act .ic{flex:0 0 auto}
+@media (max-width:620px){
+  .users-toolbar .btn{flex:1 1 100%;width:100%}
+  /* kartu aksi: 2 tombol per baris, teks boleh turun baris agar tidak terpotong */
+  #page-users table.responsive tr{padding:12px 13px}
+  #page-users table.responsive td[data-label='Tindakan']::before{margin-bottom:6px}
+  .u-actions{display:grid;grid-template-columns:1fr 1fr}
+  .u-actions .u-act{
+    width:100%;white-space:normal;text-align:center;line-height:1.35;
+    min-height:42px;justify-content:center;
+  }
+  /* tombol "Atur Ulang" yang ikon-saja di kolom password jangan ikut melebar */
+  .u-actions .u-act.icon-only{grid-column:auto;width:auto;justify-self:start}
+  .u-badges .badge{font-size:.58rem}
+}
+@media (min-width:621px) and (max-width:900px){
+  #page-users .table-wrap{overflow-x:auto}
+  #page-users table{min-width:620px}
+  .u-actions .u-act{flex:0 0 auto}
+}
+@media (min-width:901px){
+  #page-users table{table-layout:fixed}
+  #page-users th:nth-child(1),#page-users td:nth-child(1){width:24%}
+  #page-users th:nth-child(2),#page-users td:nth-child(2){width:13%}
+  #page-users th:nth-child(3),#page-users td:nth-child(3){width:11%}
+  #page-users th:nth-child(4),#page-users td:nth-child(4){width:24%}
+  #page-users th:nth-child(5),#page-users td:nth-child(5){width:28%}
+  #page-users td:nth-child(5){text-align:right}
+  .u-actions{justify-content:flex-end}
 }
 
 /* ---------- 20. PENYESUAIAN LAYAR --------------------------------------- */
