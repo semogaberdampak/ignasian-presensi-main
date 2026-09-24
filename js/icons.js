@@ -181,7 +181,29 @@
       '<circle cx="12" cy="12" r="8.6"/>' +
       '<circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/>' +
       '<path d="M12 12 16.8 8.2"/>' +
-      '<path d="M12 3.4v1.8M20.6 12h-1.8M12 20.6v-1.8M3.4 12h1.8"/>'
+      '<path d="M12 3.4v1.8M20.6 12h-1.8M12 20.6v-1.8M3.4 12h1.8"/>',
+
+    /* Gantungan kunci — Lupa password */
+    keyring:
+      '<circle cx="8.4" cy="16.4" r="3.6"/>' +
+      '<path d="M11 14 19.6 5.4"/>' +
+      '<path d="M14.4 9.2l2.2 2.2M16.8 6.8l2.2 2.2"/>' +
+      '<path d="M5.2 16.4h1M7.3 14.7h1"/>',
+
+    /* Mata terbuka — lihat kata sandi */
+    eye:
+      '<path d="M2.8 12S6.4 5.8 12 5.8 21.2 12 21.2 12 17.6 18.2 12 18.2 2.8 12 2.8 12Z"/>' +
+      '<circle cx="12" cy="12" r="3"/>',
+
+    /* Gelembung obrolan dengan gagang telepon — hubungi via WhatsApp */
+    wa:
+      '<path d="M20.4 11.4a8.4 8.4 0 0 1-12.6 7.3L3.6 20.4l1.7-4.2A8.4 8.4 0 1 1 20.4 11.4Z"/>' +
+      '<path d="M9.2 9.4c0 3 2.4 5.4 5.4 5.4v-1.9l-1.6-.7a4.6 4.6 0 0 1-1.2-1.2l-.7-1.6Z"/>',
+
+    /* Jam dinding — masa berlaku sesi masuk */
+    clock:
+      '<circle cx="12" cy="12" r="8.8"/>' +
+      '<path d="M12 6.8V12l3.4 2.2"/>'
   };
 
 

@@ -16,7 +16,8 @@ Pindai QR / kelola akun / jadwal
   IndexedDB (perangkat)  ◄── sumber kebenaran saat luring
         │  antrean (outbox) berurutan
         ▼
-  Supabase  (Postgres + REST/PostgREST)   ← tabel: users, jadwal, presensi, logs
+  Supabase  (Postgres + REST/PostgREST)   ← tabel: users, jadwal, presensi, logs,
+                                             password_requests
         │  tarikan berkala (60 detik / saat kembali daring)
         ▼
   DIGABUNG (merge) — perubahan lokal yang belum terkirim selalu menang
@@ -214,6 +215,9 @@ app shell pada versi cache yang sama; naikkan `VERSION` di `sw.js` bila perlu).
 | **Uji Koneksi**: "Tabel belum ada di Supabase" | Jalankan `supabase/schema.sql` (Langkah 2). |
 | **Uji Koneksi**: "Kunci anon Supabase ditolak" | Salin ulang **anon public** key; pastikan tidak ada spasi/enter. |
 | Login gagal padahal akun ada | Perangkat luring → sambungkan internet lalu coba lagi; atau akun memang belum dibuat. |
+| Pemindaian QR menolak "bukan kode QR Presensi Ignasian" | QR berasal dari aplikasi/versi lain → buat ulang QR pada **Buat Kode QR** (format kini lebih ringkas & mudah terbaca). |
+| Pemindaian QR menolak karena "acara lain" | Buka **Beranda → Sesi Hari Ini** lalu ketuk acara yang benar, atau batalkan pilihan acara pada kartu **Acara yang Dipindai**. |
+| Log/riwayat terhapus muncul kembali | Jalankan ulang `supabase/schema.sql` (kolom & tabel baru), lalu tekan **Sinkron sekarang**. |
 | Perubahan tidak muncul di Supabase | Buka **Pengaturan** → cek **Antrean perubahan**; tekan **Sinkron sekarang**; periksa pesan galat pada **Server sinkronisasi**. |
 | Kamera tidak terbuka | Buka via HTTPS/localhost dan izinkan kamera; alternatif tombol **Pindai dari Foto**. |
 | Data lama masih tampil | **Pengaturan → Muat ulang data peranti**. |
@@ -240,6 +244,30 @@ app shell pada versi cache yang sama; naikkan `VERSION` di `sw.js` bila perlu).
 
 ## 10. Riwayat versi singkat
 
+* **4.6.0** — Penyempurnaan menyeluruh:
+  * Pemindai QR jauh lebih tangguh: format isi QR diringkas (v2) + dukungan
+    format cetakan lama, acara dicocokkan dengan data jadwal di perangkat,
+    pemeriksaan acara ganda saat lebih dari satu acara berlangsung, dan
+    pemindaian foto kini bisa dari **Galeri**.
+  * **Sesi Hari Ini** di Beranda menjadi pintasan: ketuk acara → langsung ke
+    halaman Presensi dengan acara terpilih (staff juga mendapat tombol **QR**).
+  * Aktivitas Terbaru & Log selalu urut **terbaru di atas**; penghapusan log
+    (per baris maupun sekaligus) kini benar-benar terhapus di perangkat
+    **dan** server.
+  * Riwayat Presensi (Administrator) mendapat kolom **Kelola → Hapus**.
+  * Panduan Pemakaian ditampilkan **hanya sesuai peran**.
+  * Data Peserta: kolom **Password** + tombol **Lihat Semua Password**,
+    **Atur Ulang Password**, dan pintasan **WhatsApp** (tindakan tercatat di log).
+  * **Lupa Password?** pada layar masuk: pengguna mengirim nomor HP/WA
+    terdaftar → permintaan masuk ke Administrator yang sedang login
+    (pemberitahuan + kartu di Beranda) → Administrator menghubungi via
+    WhatsApp langsung. Tabel baru `password_requests`.
+  * Selubung awal saat menyegarkan halaman: tidak ada lagi kedipan/redirect
+    ke layar login, dan halaman terakhir tetap terbuka.
+  * **Time-out sesi**: Pengurus & Peserta 6 jam, Administrator 12 jam —
+    dengan pemberitahuan ramah sesaat sebelum keluar otomatis.
+  * Skema: kolom `users.pass_plain` (salinan kata sandi untuk pemulihan) —
+    **jalankan ulang `supabase/schema.sql`** pada proyek yang sudah ada.
 * **4.1.0** — Basis data pindah ke **Supabase** (REST/PostgREST), konfigurasi
   terpusat di `js/config.js`, outbox lebih tahan gagal (tanpa head-of-line
   blocking), tombol **Uji Koneksi Database**, login dapat menarik akun dari

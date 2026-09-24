@@ -9,11 +9,12 @@
    ============================================================ */
 
 const DB_NAME = 'ign_presensi_db';
-const DB_VERSION = 1;
+/* 2 = menambah object store "requests" (permintaan pemulihan kata sandi). */
+const DB_VERSION = 2;
 
 /* Object store database: koleksi data + kv (key-value) untuk
    sesi, tema, dan metadata. */
-const DB_COLLECTION_STORES = ['users', 'jadwal', 'presensi', 'logs', 'outbox', 'tombstones'];
+const DB_COLLECTION_STORES = ['users', 'jadwal', 'presensi', 'logs', 'outbox', 'tombstones', 'requests'];
 const DB_ALL_STORES = DB_COLLECTION_STORES.concat(['kv']);
 
 let _dbPromise = null;

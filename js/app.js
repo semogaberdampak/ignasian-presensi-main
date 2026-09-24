@@ -14,18 +14,24 @@
    js/config.js agar hanya ada satu tempat pengisian. */
 const CONFIG = Object.assign({
   APP_NAME: 'Presensi Ignasian',
-  VERSION: '4.1.0',
+  VERSION: '4.6.0',
   SYNC_INTERVAL: 60000,   // 60 detik saat daring
   MAX_USERS: 50,
   MAX_QUEUE: 500,
   MAX_LOG: 500,
-  MAX_SYNC_TRIES: 5
+  MAX_SYNC_TRIES: 5,
+  /* Masa berlaku sesi masuk (mili-detik) demi keamanan akun.
+     Pengurus & Peserta 6 jam, Administrator 12 jam. */
+  SESSION_TTL_STAFF: 6 * 60 * 60 * 1000,
+  SESSION_TTL_ADMIN: 12 * 60 * 60 * 1000,
+  SESSION_WARN_MS: 5 * 60 * 1000   // peringatan ramah 5 menit sebelum sesi berakhir
 }, window.IGN_CONFIG || {});
 
 const STORE_KEYS = {
   users: 'ign_users', jadwal: 'ign_jadwal', presensi: 'ign_presensi',
   logs: 'ign_logs', session: 'ign_session', outbox: 'ign_outbox',
-  tomb: 'ign_tombstones', meta: 'ign_meta', theme: 'ign_theme'
+  tomb: 'ign_tombstones', meta: 'ign_meta', theme: 'ign_theme',
+  requests: 'ign_requests'
 };
 
 const STAFF_ROLES = ['admin', 'pengurus'];
@@ -39,7 +45,7 @@ const ROLE_LABEL = { admin: 'Administrator', pengurus: 'Pengurus', peserta: 'Pes
 /* ---------- 2. STATE ----------------------------------------------------- */
 let state = {
   currentUser: null,
-  users: [], jadwal: [], presensi: [], logs: [],
+  users: [], jadwal: [], presensi: [], logs: [], requests: [],
   outbox: [], tombstones: [],
   meta: { lastSync: null, mountedAt: new Date().toISOString() },
   scanner: null,
@@ -48,7 +54,11 @@ let state = {
   syncing: false, activePage: 'home',
   apiHint: null,          // pesan ramah bila basis data menolak permintaan
   backoffUntil: 0,        // jeda agar tidak membanjiri server yang bermasalah
-  lastPushError: null     // galat terakhir saat mengirim antrean
+  lastPushError: null,    // galat terakhir saat mengirim antrean
+  activeJadwalId: null,   // acara yang dipilih di halaman Presensi (pintasan "Sesi Hari Ini")
+  sessionExp: 0,          // kapan sesi masuk berakhir (mili-detik)
+  sessionWarned: false,   // peringatan menjelang sesi berakhir sudah ditampilkan
+  pendingRequestIds: []   // id permintaan lupa password yang belum diketahui Administrator
 };
 
 /* ---------- 3. UTILITAS -------------------------------------------------- */
@@ -173,6 +183,7 @@ function saveLocal() {
     dbReplaceAll('jadwal', state.jadwal, r => r.id);
     dbReplaceAll('presensi', state.presensi, r => r.id);
     dbReplaceAll('logs', state.logs, r => r.id);
+    dbReplaceAll('requests', state.requests, r => r.id);
     dbReplaceAll('outbox', state.outbox, r => r.opId);
     dbReplaceAll('tombstones', state.tombstones, (r, i) => r.c + ':' + r.id + ':' + i);
     kvSet('meta', state.meta);
@@ -201,10 +212,19 @@ async function loadLocal() {
   state.users = stampAll(dbRows('users'), 'createdAt');
   state.jadwal = stampAll(dbRows('jadwal'), 'createdAt');
   state.presensi = stampAll(dbRows('presensi'), 'timestamp');
-  state.logs = stampAll(dbRows('logs'), 'timestamp');
+  state.logs = sortLogs(stampAll(dbRows('logs'), 'timestamp'));
+  state.requests = stampAll(dbRows('requests'), 'ts');
   state.outbox = dbRows('outbox');
   state.tombstones = dbRows('tombstones');
   state.meta = Object.assign({ lastSync: null }, await kvGet('meta', {}));
+}
+
+/* Catatan aktivitas SELALU tersusun dari yang TERBARU ke yang terlama —
+   saat dimuat dari perangkat, sesudah sinkronisasi, dan saat ditampilkan. */
+function sortLogs(list) {
+  return (list || []).slice().sort((a, b) =>
+    (Date.parse(b.timestamp || b.updatedAt || 0) || 0) -
+    (Date.parse(a.timestamp || a.updatedAt || 0) || 0));
 }
 
 /* ---------- 6. ANTREAN SINKRON (OUTBOX) --------------------------------- */
@@ -225,12 +245,59 @@ function enqueue(type, data, extra) {
   return op;
 }
 
+/* Nama koleksi aplikasi → seluruh jenis operasi antrean yang menulis ke
+   koleksi tersebut. Wajib ada karena jenis operasi memakai bentuk tunggal
+   (user, log, request) sedangkan nama koleksi berbentuk jamak (users, logs, ...). */
+function outboxTypesFor(coll) {
+  const types = [coll];
+  const peta = (typeof SUPA_OUTBOX_TABLES !== 'undefined' && SUPA_OUTBOX_TABLES) ? SUPA_OUTBOX_TABLES : {};
+  Object.keys(peta).forEach(t => {
+    if (peta[t] === coll) types.push(t);
+  });
+  return types;
+}
+
 function queueDelete(collection, id) {
   state.tombstones.push({ c: collection, id: id, ts: Date.now() });
-  if (state.tombstones.length > 300) state.tombstones = state.tombstones.slice(-300);
-  state.outbox = state.outbox.filter(o =>
-    !(o.data && o.data.id === id && (o.type === collection || o.type === 'delete')));
+  if (state.tombstones.length > 500) state.tombstones = state.tombstones.slice(-500);
+  const types = outboxTypesFor(collection);
+  /* Buang operasi tulis yang belum terkirim untuk catatan ini — kalau tidak,
+     catatan yang baru dihapus akan "hidup kembali" saat antrean dikirim. */
+  state.outbox = state.outbox.filter(o => {
+    const d = o.data || {};
+    if (o.type === 'delete') return !(d.collection === collection && d.id === id);
+    return !(d.id === id && types.indexOf(o.type) !== -1);
+  });
   return enqueue('delete', { collection: collection, id: id });
+}
+
+/* Hapus banyak catatan sekaligus dengan satu pembersihan antrean —
+   dipakai "Bersihkan Tampilan Log" agar ratusan operasi tidak dibuat
+   satu per satu (antrean tetap ringan dan pengiriman tetap berurutan). */
+function queueDeleteMany(collection, ids) {
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) return 0;
+  const types = outboxTypesFor(collection);
+  const set = new Set(list.map(String));
+
+  list.forEach(id => state.tombstones.push({ c: collection, id: id, ts: Date.now() }));
+  if (state.tombstones.length > 500) state.tombstones = state.tombstones.slice(-500);
+
+  state.outbox = state.outbox.filter(o => {
+    const d = o.data || {};
+    if (o.type === 'delete') return !(d.collection === collection && set.has(String(d.id)));
+    return !(d.id && set.has(String(d.id)) && types.indexOf(o.type) !== -1);
+  });
+  list.forEach(id => state.outbox.push({
+    opId: uid(), type: 'delete', data: { collection: collection, id: id },
+    ts: Date.now(), tries: 0
+  }));
+  if (state.outbox.length > CONFIG.MAX_QUEUE) state.outbox = state.outbox.slice(-CONFIG.MAX_QUEUE);
+
+  saveLocal();
+  updateSyncUI();
+  flushQueue();
+  return list.length;
 }
 
 function isTombstoned(coll, id) {
@@ -238,7 +305,12 @@ function isTombstoned(coll, id) {
 }
 function pendingIds(coll) {
   const ids = new Set();
-  state.outbox.forEach(o => { if (o.type === coll && o.data && o.data.id) ids.add(o.data.id); });
+  /* Jenis operasi memakai bentuk tunggal (user/log/request) sedangkan
+     koleksi berbentuk jamak (users/logs/requests) — pakai pemetaan. */
+  const types = outboxTypesFor(coll);
+  state.outbox.forEach(o => {
+    if (o.data && o.data.id && types.indexOf(o.type) !== -1) ids.add(o.data.id);
+  });
   return ids;
 }
 
@@ -357,10 +429,11 @@ function mergeList(local, remote, coll) {
 
 function mergeRemote(data) {
   let changed = false;
-  ['users', 'jadwal', 'presensi', 'logs'].forEach(key => {
+  ['users', 'jadwal', 'presensi', 'logs', 'requests'].forEach(key => {
     if (!Array.isArray(data[key])) return;
     const before = sig(state[key]);
     state[key] = mergeList(state[key], data[key], key);
+    if (key === 'logs') state[key] = sortLogs(state[key]);   /* terbaru tetap di atas */
     if (sig(state[key]) !== before) changed = true;
   });
   return changed;
@@ -372,13 +445,14 @@ async function pullRemote(silent) {
      atau kunci anon salah): jeda 5 menit setelah gagal konfigurasi. */
   if (state.backoffUntil && Date.now() < state.backoffUntil) { updateSyncUI('error'); return false; }
   try {
-    const data = await supaPullAll({ includeLogs: isAdmin() });
+    const data = await supaPullAll({ includeLogs: isAdmin(), includeRequests: isAdmin() });
     const changed = mergeRemote(data);
     state.apiHint = null;
     state.backoffUntil = 0;
     state.meta.lastSync = new Date().toISOString();
     saveLocal();
     if (changed) {
+      notifyNewResetRequests();       /* pemberitahuan permintaan lupa password (ADMIN) */
       renderActivePage();
       if (!silent) toast('Data diperbarui dari Supabase', 'success');
     }
@@ -556,25 +630,93 @@ async function doLogin() {
     }
 
     state.currentUser = user;
-    kvSet('session', { id: user.id, t: Date.now() }); /* sesi disimpan di database peranti */
-    addLog('LOGIN', { username: user.username });
+    startSession(user);   /* catat masa berlaku sesi + pengawas waktu (6/12 jam) */
+    addLog('LOGIN', { username: user.username, masaBerlaku: fmtDurasi(sessionTtlMs(user)) });
     toast('Selamat datang, ' + user.nama + '!', 'success');
-    showMainApp();
+    showMainApp('home');
   } finally {
     if (btn) { btn.disabled = false; if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
   }
 }
 
-function doLogout() {
+function doLogout(opts) {
+  const simpanUsername = !!(opts && opts.keepUsername);
+  const usernameTerakhir = state.currentUser ? state.currentUser.username : '';
   if (state.currentUser) addLog('LOGOUT', { username: state.currentUser.username });
   state.currentUser = null;
+  state.sessionExp = 0;
+  state.sessionWarned = false;
+  state.activeJadwalId = null;
   kvSet('session', null); /* hapus sesi dari database */
   stopScanner();
   $('mainApp').classList.add('hidden');
   $('loginScreen').classList.remove('hidden');
-  $('loginUser').value = '';
+  $('loginUser').value = simpanUsername ? usernameTerakhir : '';
   $('loginPass').value = '';
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+  endBoot();
+}
+
+/* ---------- 11b. MASA BERLAKU SESI (TIME-OUT LOGIN) --------------------- */
+/* Demi keamanan akun: sesi Pengurus & Peserta berakhir setelah 6 jam,
+   Administrator setelah 12 jam. Ketika berakhir, pengguna otomatis keluar
+   dan diberi tahu dengan bahasa yang santai namun tetap sopan. */
+function sessionTtlMs(user) {
+  const role = (user && user.role) || 'peserta';
+  return role === 'admin'
+    ? (Number(CONFIG.SESSION_TTL_ADMIN) || 12 * 60 * 60 * 1000)
+    : (Number(CONFIG.SESSION_TTL_STAFF) || 6 * 60 * 60 * 1000);
+}
+
+function fmtDurasi(ms) {
+  const jam = Math.max(1, Math.round(Number(ms) / 3600000));
+  return jam + ' jam';
+}
+
+/* Catat sesi di database peranti agar tetap berlaku saat halaman disegarkan */
+function startSession(user) {
+  const now = Date.now();
+  const exp = now + sessionTtlMs(user);
+  state.sessionExp = exp;
+  state.sessionWarned = false;
+  kvSet('session', { id: user.id, t: now, exp: exp, role: user.role });
+}
+
+/* Pengawas waktu: memeriksa sesi tiap 30 detik dan saat aplikasi difokuskan */
+function startSessionWatch() {
+  if (startSessionWatch._on) return;
+  startSessionWatch._on = true;
+  setInterval(checkSessionTimeout, 30000);
+  window.addEventListener('focus', checkSessionTimeout);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkSessionTimeout(); });
+}
+
+function checkSessionTimeout() {
+  if (!state.currentUser || !state.sessionExp) return;
+  const sisa = state.sessionExp - Date.now();
+  if (sisa <= 0) { sesiBerakhir(); return; }
+  if (sisa <= CONFIG.SESSION_WARN_MS && !state.sessionWarned) {
+    state.sessionWarned = true;
+    const menit = Math.max(1, Math.round(sisa / 60000));
+    toast('Sesi Anda berakhir dalam ' + menit + ' menit. Silakan simpan pekerjaan Anda dahulu, ya.', 'info');
+  }
+}
+
+function sesiBerakhir() {
+  const user = state.currentUser;
+  const durasi = fmtDurasi(sessionTtlMs(user));
+  addLog('SESSION_TIMEOUT', { username: user ? user.username : '-' });
+  state.sessionExp = 0;
+  try { stopScanner(); } catch (e) { /* abaikan */ }
+  doLogout({ keepUsername: true });
+  showModal('Sesi Anda Berakhir',
+    '<p>Terima kasih atas kesetiaan Anda melayani hari ini.</p>' +
+    '<p class="small mt-6">Demi keamanan akun, aplikasi mengeluarkan sesi secara otomatis setelah ' +
+    esc(durasi) + ' pemakaian. Tidak ada data yang hilang — semuanya sudah tersimpan' +
+    (apiReady() ? ' dan akan dikirim ke server saat Anda masuk kembali' : ' di perangkat ini') + '.</p>' +
+    '<p class="small mt-6">Silakan masuk kembali untuk melanjutkan, tetap semangat, dan selamat berkarya.</p>' +
+    '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">' +
+    ic('keycross') + 'Masuk Kembali</button></div>');
 }
 
 /* Pengguna contoh untuk pemakaian mandiri (tanpa Supabase).
@@ -593,6 +735,7 @@ async function seedDefaultUsers() {
       nama: d.nama,
       username: d.username,
       passHash: await sha256(d.pass),
+      passPlain: d.pass,        /* disimpan demi pemulihan oleh Administrator */
       hpHash: await sha256(d.hp),
       hpPlain: d.hp,          // disimpan demi kompatibilitas skema lama
       role: d.role,
@@ -609,10 +752,28 @@ async function seedDefaultUsers() {
 async function checkSession() {
   const s = await kvGet('session', null);
   if (!s || !s.id) return false;
+  /* Sesi yang sudah kedaluwarsa (time-out login) langsung ditutup. */
+  if (s.exp && Date.now() > Number(s.exp)) {
+    await kvSet('session', null);
+    _sessionExpiredAtBoot = true;
+    return false;
+  }
   const user = state.users.find(u => u.id === s.id && u.status === 'aktif');
   if (!user) return false;
   state.currentUser = user;
+  state.sessionExp = Number(s.exp) || ((Number(s.t) || Date.now()) + sessionTtlMs(user));
+  state.sessionWarned = false;
   return true;
+}
+
+/* Tandai bahwa sesi sebelumnya berakhir karena waktu (dipakai init()) */
+let _sessionExpiredAtBoot = false;
+
+function showLoginScreen() {
+  const ls = $('loginScreen');
+  const ma = $('mainApp');
+  if (ls) ls.classList.remove('hidden');
+  if (ma) ma.classList.add('hidden');
 }
 /* ---------- 12. NAVIGASI ------------------------------------------------- */
 const NAV_GROUPS = {
@@ -657,13 +818,13 @@ function showPage(name, btn) {
 function renderPage(name) {
   switch (name) {
     case 'home': renderHome(); break;
-    case 'presensi': break;
+    case 'presensi': renderPresensiSesi(); break;
     case 'riwayat': renderRiwayat(); break;
     case 'laporan': prepareLaporan(); break;
     case 'lainnya': renderLainnya(); break;
     case 'profil': loadProfil(); break;
     case 'pengaturan': applyTheme(currentTheme(), false); renderSettingsSync(); break;
-    case 'users': renderUsers(); break;
+    case 'users': renderUsers(); renderResetRequests(); break;
     case 'jadwal': renderJadwal(); setTimeout(initMapJadwal, 120); break;
     case 'qr-gen': renderQrJadwalSelect(); break;
     case 'log': renderLog(); break;
@@ -673,7 +834,12 @@ function renderPage(name) {
 }
 function renderActivePage() { renderPage(state.activePage); }
 
-function showMainApp() {
+/* Tampilkan aplikasi utama.
+   startPage menentukan halaman yang dibuka:
+     • sesudah LOGIN        → selalu Beranda
+     • sesudah SEGAR halaman (refresh) → halaman terakhir dari #hash, sehingga
+       pengguna tetap berada di halaman yang sama dan tidak dilempar ke mana-mana. */
+function showMainApp(startPage) {
   $('loginScreen').classList.add('hidden');
   $('mainApp').classList.remove('hidden');
 
@@ -681,9 +847,17 @@ function showMainApp() {
   applyRoleVisibility();
   updateSyncUI();
 
-  /* Setiap LOGIN selalu force ke Beranda — abaikan hash lama. */
-  try { history.replaceState(null, '', '#home'); } catch (e) { /* abaikan */ }
-  showPage('home');
+  const page = (startPage && canAccess(startPage)) ? startPage : 'home';
+  try { history.replaceState(null, '', '#' + page); } catch (e) { /* abaikan */ }
+  showPage(page);
+  endBoot();
+}
+
+/* Lepas selubung awal (lihat index.html + css/utilities.css).
+   Dipanggil setelah aplikasi tahu layar mana yang harus ditampilkan sehingga
+   tidak ada kedipan "dialihkan ke halaman login" saat halaman disegarkan. */
+function endBoot() {
+  try { document.documentElement.removeAttribute('data-boot'); } catch (e) { /* abaikan */ }
 }
 
 /* Kartu pengguna di kepala aplikasi (tanpa indikator sinkron — sinkron berjalan di latar) */
@@ -731,20 +905,9 @@ function renderHome() {
     feed.classList.remove('hidden');
     feed.innerHTML = renderActivityFeed();
 
-    const upcoming = state.jadwal
-      .filter(j => new Date(j.tanggal).getTime() > Date.now())
-      .sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal))
-      .slice(0, 3);
-    extra.innerHTML = cardWrap('horarium', 'Jadwal Mendatang', upcoming.length
-      ? '<div class="list">' + upcoming.map(j => `
-          <div class="list-item">
-            ${ic('horarium')}
-            <div class="body">
-              <strong>${esc(j.nama)}</strong>
-              <div class="meta">${esc(j.venue)} · ${fmtDateTime(j.tanggal)}</div>
-            </div>
-          </div>`).join('') + '</div>'
-      : '<div class="empty">' + ic('horarium', 'ic-lg') + '<div>Belum ada jadwal mendatang</div></div>');
+    /* Permintaan lupa password + pintasan "Sesi Hari Ini" + jadwal mendatang */
+    const mineAdmin = state.presensi.filter(p => p.userId === state.currentUser.id);
+    extra.innerHTML = resetRequestCard() + sesiHariIniCard(mineAdmin, true) + jadwalMendatangCard();
     return;
   }
 
@@ -761,20 +924,9 @@ function renderHome() {
       statCard('Izin Hari Ini', todayPres.filter(p => p.status === 'izin').length, 'izin') +
       statCard('Belum Presensi', Math.max(0, peserta.length - todayPres.length), 'alpha');
 
-    const upcoming = state.jadwal
-      .filter(j => new Date(j.tanggal).getTime() > Date.now())
-      .sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal))
-      .slice(0, 3);
-    extra.innerHTML = cardWrap('horarium', 'Jadwal Mendatang', upcoming.length
-      ? '<div class="list">' + upcoming.map(j => `
-          <div class="list-item">
-            ${ic('horarium')}
-            <div class="body">
-              <strong>${esc(j.nama)}</strong>
-              <div class="meta">${esc(j.venue)} · ${fmtDateTime(j.tanggal)}</div>
-            </div>
-          </div>`).join('') + '</div>'
-      : '<div class="empty">' + ic('horarium', 'ic-lg') + '<div>Belum ada jadwal mendatang</div></div>');
+    /* Pengurus: pintasan acara hari ini (dapat diketuk) + jadwal mendatang */
+    const mineStaff = state.presensi.filter(p => p.userId === state.currentUser.id);
+    extra.innerHTML = sesiHariIniCard(mineStaff, true) + jadwalMendatangCard();
     return;
   }
 
@@ -802,28 +954,10 @@ function renderHome() {
   const actCardHide = $('homeActivityCard');
   if (actCardHide) actCardHide.classList.add('hidden');
 
-  const todaySessions = state.jadwal
-    .filter(j => new Date(j.tanggal).toDateString() === now.toDateString())
-    .sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
-
   const last = mine.slice().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
 
   extra.innerHTML =
-    cardWrap('pilgrim', 'Sesi Hari Ini', todaySessions.length
-      ? '<div class="list">' + todaySessions.map(j => {
-        const done = mine.find(p => p.jadwalId === j.id);
-        const end = new Date(new Date(j.tanggal).getTime() + j.durasi * 60000);
-        return `
-          <div class="list-item">
-            ${ic('pilgrim')}
-            <div class="body">
-              <strong>${esc(j.nama)}</strong>
-              <div class="meta">${esc(j.venue)} · ${fmtTime(j.tanggal)}–${fmtTime(end)}</div>
-            </div>
-            <span class="badge ${done ? 'badge-' + esc(done.status) : 'badge-role'}">${done ? esc(done.status) : 'belum'}</span>
-          </div>`;
-      }).join('') + '</div>'
-      : '<div class="empty">' + ic('horarium', 'ic-lg') + '<div>Tidak ada sesi hari ini</div></div>') +
+    sesiHariIniCard(mine, false) +
     cardWrap('seal', 'Presensi Terakhir Anda', last
       ? `<div class="list-item">${ic('seal')}
           <div class="body">
@@ -836,10 +970,81 @@ function renderHome() {
       : '<div class="empty">' + ic('scrap', 'ic-lg') + '<div>Anda belum pernah presensi</div></div>');
 }
 
-/* Catatan aktivitas sistem — HANYA ADMIN (Pengurus tidak melihat) */
+/* ---------- 14b. PINTASAN "SESI HARI INI" ------------------------------- */
+/* Setiap acara hari ini dapat diketuk dan langsung membuka halaman Presensi
+   dengan acara tersebut TERPILIH, sehingga kode QR yang dipindai wajib milik
+   acara itu. Ini mencegah tertukarnya presensi bila ada lebih dari satu acara
+   berlangsung pada waktu yang sama. Administrator & Pengurus juga mendapat
+   tombol QR agar dapat langsung membuat kode QR acara tersebut. */
+function todayJadwalList() {
+  const hariIni = new Date().toDateString();
+  return (state.jadwal || [])
+    .filter(j => new Date(j.tanggal).toDateString() === hariIni)
+    .sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
+}
+
+function sesiHariIniCard(mineList, withQr) {
+  const sesi = todayJadwalList();
+  if (!sesi.length) {
+    return cardWrap('pilgrim', 'Sesi Hari Ini',
+      '<div class="empty">' + ic('horarium', 'ic-lg') + '<div>Tidak ada sesi hari ini</div></div>');
+  }
+  const now = Date.now();
+  const isi = sesi.map(j => {
+    const mulai = new Date(j.tanggal).getTime();
+    const end = new Date(mulai + (Number(j.durasi) || 60) * 60000);
+    const belumMulai = now < mulai - 5 * 60000;
+    const selesai = end.getTime() < now;
+    const dipilih = state.activeJadwalId && String(state.activeJadwalId) === String(j.id);
+    const catatan = mineList ? mineList.find(p => String(p.jadwalId) === String(j.id)) : null;
+    const tail = catatan
+      ? '<span class="badge badge-' + esc(catatan.status) + '">' + esc(catatan.status) + '</span>'
+      : (selesai ? '<span class="badge badge-nonaktif">selesai</span>'
+        : (belumMulai ? '<span class="badge badge-gold">' + esc(fmtTime(j.tanggal)) + '</span>'
+          : '<span class="badge badge-aktif">berlangsung</span>'));
+    const tombolQr = withQr
+      ? '<span class="btn btn-outline btn-sm" role="button" onclick="event.stopPropagation();bukaQrSesi(\'' +
+        esc(j.id) + '\')">' + ic('matrix') + 'QR</span>'
+      : '';
+    return `
+      <button class="pick-item${dipilih ? ' is-picked' : ''}" type="button" onclick="bukaPresensiSesi('${esc(j.id)}')">
+        ${ic('pilgrim')}
+        <div class="body">
+          <strong>${esc(j.nama)}</strong>
+          <div class="meta">${esc(j.venue || '')} · ${fmtTime(j.tanggal)}–${fmtTime(end)}</div>
+          <div class="meta">${dipilih ? 'Acara ini sedang dipilih untuk presensi' : 'Ketuk untuk membuka presensi acara ini'}</div>
+        </div>
+        <span class="tail">${tail}${tombolQr}</span>
+      </button>`;
+  }).join('');
+  return cardWrap('pilgrim', 'Sesi Hari Ini',
+    '<div>' + isi + '</div>' +
+    '<p class="tiny muted">Pintasan ini menyelaraskan acara dengan kode QR-nya, sehingga presensi tidak tertukar ' +
+    'bila ada lebih dari satu acara pada waktu yang sama.</p>');
+}
+
+function jadwalMendatangCard() {
+  const upcoming = (state.jadwal || [])
+    .filter(j => new Date(j.tanggal).getTime() > Date.now())
+    .sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal))
+    .slice(0, 3);
+  return cardWrap('horarium', 'Jadwal Mendatang', upcoming.length
+    ? '<div class="list">' + upcoming.map(j => `
+        <div class="list-item">
+          ${ic('horarium')}
+          <div class="body">
+            <strong>${esc(j.nama)}</strong>
+            <div class="meta">${esc(j.venue)} · ${fmtDateTime(j.tanggal)}</div>
+          </div>
+        </div>`).join('') + '</div>'
+    : '<div class="empty">' + ic('horarium', 'ic-lg') + '<div>Belum ada jadwal mendatang</div></div>');
+}
+
+/* Catatan aktivitas sistem — HANYA ADMIN (Pengurus tidak melihat).
+   SELALU diurutkan dari yang terbaru ke yang terlama. */
 function renderActivityFeed() {
   if (!isAdmin()) return '';
-  const recent = state.logs.slice(0, 8);
+  const recent = sortLogs(state.logs).slice(0, 8);
   if (!recent.length) {
     return '<div class="empty">' + ic('ledger', 'ic-lg') + '<div>Belum ada catatan aktivitas</div></div>';
   }
@@ -848,7 +1053,10 @@ function renderActivityFeed() {
     CREATE_USER: 'quill', CREATE_JADWAL: 'horarium', GENERATE_QR: 'matrix',
     DELETE_JADWAL: 'scrap', DELETE_USER: 'scrap', TOGGLE_USER: 'lamp',
     UPDATE_PROFILE: 'halobust', VIEW_LAPORAN: 'bulla', SCAN_ERROR: 'scrap',
-    DELETE_PRESENSI: 'scrap', UPDATE_PRESENSI: 'quill', PRINT_LAPORAN: 'bulla', EXPORT_LAPORAN: 'descend'
+    DELETE_PRESENSI: 'scrap', UPDATE_PRESENSI: 'quill', PRINT_LAPORAN: 'bulla', EXPORT_LAPORAN: 'descend',
+    START_SCAN: 'viewfinder', SESSION_TIMEOUT: 'clock', RESET_REQUEST: 'keyring',
+    DELETE_LOG: 'scrap', VIEW_PASSWORD: 'eye', RESET_PASSWORD: 'keyring',
+    DELETE_REQUEST: 'scrap'
   };
   return '<div class="list">' + recent.map(l => `
     <div class="list-item">
@@ -1015,7 +1223,14 @@ async function startScanner() {
   $('btnStopScan').classList.remove('hidden');
   scanHint('Meminta izin kamera…');
   await ensureScannerStopped();
-  const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+  /* qrbox lebih besar agar kode QR padat tetap tajam terbaca; BarcodeDetector
+     bila tersedia (Android) — jauh lebih andal ketimbang penguraian JS. */
+  const config = {
+    fps: 12,
+    qrbox: { width: 280, height: 280 },
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+    rememberLastUsedCamera: true
+  };
   const onFail = () => {};
   try {
     const devices = await Html5Qrcode.getCameras().catch(() => []);
@@ -1066,14 +1281,34 @@ async function stopScanner() {
 
 async function scanFromFile(input) {
   if (!input || !input.files || !input.files.length) return;
-  if (typeof Html5Qrcode === 'undefined') {
-    toast('Pemindai QR belum termuat (peranti luring).', 'error');
+  if (typeof Html5Qrcode === 'undefined' && typeof BarcodeDetector === 'undefined') {
+    toast('Pemindai QR belum termuat (peranti luring). Sambungkan sekali ke internet, lalu muat ulang.', 'error');
     input.value = '';
     return;
   }
   const file = input.files[0];
+  toast('Membaca foto QR…', 'info');
   try {
-    toast('Membaca foto QR…', 'info');
+    const decoded = await bacaQrDariFoto(file);
+    input.value = '';
+    if (!decoded) {
+      addLog('SCAN_ERROR', { error: 'foto tidak terbaca' });
+      toast('Foto belum terbaca — pastikan seluruh kode QR terlihat jelas, tidak buram, dan tidak terpotong.', 'error');
+      return;
+    }
+    await onScanSuccess(decoded);
+  } catch (e) {
+    input.value = '';
+    toast('Foto belum terbaca — pastikan seluruh kode QR terlihat jelas, tidak buram, dan tidak terpotong.', 'error');
+  }
+}
+
+/* Baca kode QR dari berkas gambar — dipakai tombol "Buka Galeri" dan
+   "Ambil Foto dengan Kamera". Beberapa cara dicoba berurutan agar foto
+   dari galeri pun tetap terbaca. */
+async function bacaQrDariFoto(file) {
+  /* Cara 1 — pustaka html5-qrcode (sama dengan pemindai kamera) */
+  if (typeof Html5Qrcode !== 'undefined') {
     let tmp = document.getElementById('qr-file-reader');
     if (!tmp) {
       tmp = document.createElement('div');
@@ -1082,49 +1317,114 @@ async function scanFromFile(input) {
       document.body.appendChild(tmp);
     }
     const reader = new Html5Qrcode('qr-file-reader');
-    const decoded = await reader.scanFile(file, true);
-    try { await reader.clear(); } catch (e) {}
-    input.value = '';
-    await onScanSuccess(decoded);
-  } catch (e) {
-    input.value = '';
-    toast('Foto tidak mengandung QR yang valid.', 'error');
+    for (const gabungUlang of [true, false]) {
+      try {
+        const hasil = await reader.scanFile(file, gabungUlang);
+        if (hasil) return hasil;
+      } catch (e) { /* coba cara berikutnya */ }
+    }
+    try { await reader.clear(); } catch (e) { /* abaikan */ }
   }
+
+  /* Cara 2 — BarcodeDetector bawaan peramban (Android/Chrome) */
+  if (typeof BarcodeDetector !== 'undefined') {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const hasil = await new BarcodeDetector({ formats: ['qr_code'] }).detect(bitmap);
+      if (bitmap && bitmap.close) bitmap.close();
+      if (hasil && hasil.length && hasil[0].rawValue) return hasil[0].rawValue;
+    } catch (e) { /* coba cara berikutnya */ }
+  }
+
+  /* Cara 3 — gambar digambar ulang ke kanvas (peramban lama/ukuran besar) */
+  if (typeof Html5Qrcode !== 'undefined' && typeof URL !== 'undefined' && URL.createObjectURL) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = () => reject(new Error('gambar tidak terbaca'));
+        el.src = url;
+      });
+      const kanvas = document.createElement('canvas');
+      kanvas.width = img.naturalWidth || img.width;
+      kanvas.height = img.naturalHeight || img.height;
+      kanvas.getContext('2d').drawImage(img, 0, 0);
+      const hasil = await new Html5Qrcode('qr-file-reader').scanFile(kanvas, false);
+      if (hasil) return hasil;
+    } catch (e) { /* tidak dapat dibaca */ } finally {
+      try { URL.revokeObjectURL(url); } catch (e) { /* abaikan */ }
+    }
+  }
+  return null;
 }
 
 async function onScanSuccess(decoded) {
   await stopScanner();
   try {
-    let payload;
-    try {
-      payload = JSON.parse(decodeURIComponent(escape(atob(decoded))));
-    } catch (e2) {
-      payload = JSON.parse(atob(decoded));
-    }
-    if (payload.type !== 'PRESENSI_IGNASIAN') throw new Error('Kode QR bukan milik Presensi Ignasian');
+    /* 1. Terjemahkan isi QR (mendukung format baru & format cetakan lama) */
+    const payload = decodeQrText(decoded);
 
-    const start = new Date(payload.start).getTime();
-    const end = start + payload.durasi * 60000;
+    /* 2. Selaraskan dengan acara yang benar-benar tercatat di perangkat.
+          Data acara (waktu, radius, koordinat) menjadi sumber kebenaran. */
+    let jadwal = resolveJadwal(payload);
+    if (!jadwal && apiReady() && isOnline()) {
+      toast('Memeriksa acara pada basis data…', 'info');
+      await pullRemote(true);
+      jadwal = resolveJadwal(payload);
+    }
+    if (!jadwal) {
+      throw new Error('Acara pada kode QR belum terdaftar. Pastikan acara sudah dibuat pada menu Kelola Jadwal ' +
+        'lalu coba pindai ulang.');
+    }
+
+    /* 3. Pintasan "Sesi Hari Ini": bila ada acara terpilih, QR harus milik
+          acara yang sama — inilah yang mencegah tertukarnya presensi ketika
+          lebih dari satu acara berlangsung bersamaan. */
+    const sesiHariIni = todayJadwalList();
+    if (!state.activeJadwalId && sesiHariIni.length > 1) {
+      throw new Error('Hari ini ada ' + sesiHariIni.length + ' acara. Pilih dulu acara yang Anda ikuti pada ' +
+        'kartu "Acara yang Dipindai" di atas, agar presensi Anda tidak tertukar dengan acara lain.');
+    }
+    if (state.activeJadwalId && String(state.activeJadwalId) !== String(jadwal.id)) {
+      const dipilih = (state.jadwal || []).find(x => String(x.id) === String(state.activeJadwalId));
+      throw new Error('Kode QR ini milik acara "' + (payload.nama || jadwal.nama) + '", sedangkan Anda memilih "' +
+        (dipilih ? dipilih.nama : 'acara lain') +
+        '". Ketuk acara yang sesuai pada kartu "Acara yang Dipindai", atau ketuk acara lain pada Beranda.');
+    }
+    if (!state.activeJadwalId) await setActiveJadwal(jadwal.id, true);
+
+    /* 4. Masa aktif sesi — dihitung dari acara, bukan dari isi QR */
+    const start = new Date(jadwal.tanggal).getTime();
+    const durasi = Number(jadwal.durasi) || Number(payload.durasi) || 60;
+    const end = start + durasi * 60000;
     const now = Date.now();
-    if (now < start - 300000 || now > end) throw new Error('Sesi tidak aktif atau sudah berakhir');
-
-    if (state.presensi.some(p => p.userId === state.currentUser.id && p.jadwalId === payload.jadwalId)) {
-      throw new Error('Anda sudah presensi pada sesi ini');
+    if (isNaN(start)) throw new Error('Waktu acara belum ditetapkan — hubungi Administrator/Pengurus.');
+    if (now < start - 300000 || now > end) {
+      throw new Error('Sesi belum dibuka atau sudah berakhir untuk acara "' + jadwal.nama + '" (' +
+        fmtDateTime(jadwal.tanggal) + ' – ' + fmtTime(end) + ').');
     }
-    if (!navigator.geolocation) throw new Error('Peranti ini tidak mendukung layanan lokasi');
 
-    toast('Membaca titik lokasi…', 'info');
+    /* 5. Cegah duplikasi satu acara per peserta */
+    if (state.presensi.some(p => p.userId === state.currentUser.id && String(p.jadwalId) === String(jadwal.id))) {
+      throw new Error('Anda sudah presensi pada acara "' + jadwal.nama + '".');
+    }
+
+    /* 6. Lokasi wajib untuk pemeriksaan radius */
+    if (!navigator.geolocation) throw new Error('Peranti ini tidak mendukung layanan lokasi');
     if (!window.isSecureContext) {
       toast('Lokasi membutuhkan HTTPS/localhost — buka aplikasi via koneksi aman.', 'error');
       addLog('SCAN_ERROR', { error: 'insecure-context' });
       return;
     }
+    toast('Membaca titik lokasi…', 'info');
     try {
     navigator.geolocation.getCurrentPosition(pos => {
-      const dist = haversine(pos.coords.latitude, pos.coords.longitude, payload.lat, payload.lng);
-      if (dist > payload.radius) {
-        toast('Terlalu jauh dari venue (' + dist.toFixed(0) + ' m > ' + payload.radius + ' m)', 'error');
-        addLog('PRESENSI_GAGAL', { reason: 'di luar radius', distance: Math.round(dist), jadwalId: payload.jadwalId });
+      const radius = Number(jadwal.radius) || Number(payload.radius) || 50;
+      const dist = haversine(pos.coords.latitude, pos.coords.longitude, Number(jadwal.lat), Number(jadwal.lng));
+      if (dist > radius) {
+        toast('Terlalu jauh dari venue (' + dist.toFixed(0) + ' m > ' + radius + ' m)', 'error');
+        addLog('PRESENSI_GAGAL', { reason: 'di luar radius', distance: Math.round(dist), jadwalId: jadwal.id });
         return;
       }
 
@@ -1133,9 +1433,9 @@ async function onScanSuccess(decoded) {
         id: uid(),
         userId: state.currentUser.id,
         userName: state.currentUser.nama,
-        jadwalId: payload.jadwalId,
-        jadwalNama: payload.nama,
-        venue: payload.venue,
+        jadwalId: jadwal.id,
+        jadwalNama: jadwal.nama,
+        venue: jadwal.venue,
         status: 'hadir',
         metode: 'qr',
         lat: pos.coords.latitude,
@@ -1146,42 +1446,221 @@ async function onScanSuccess(decoded) {
         updatedAt: nowIso
       };
       savePresensi(pres);
-      addLog('PRESENSI', { jadwalId: payload.jadwalId, metode: 'qr', distance: Math.round(dist) });
+      addLog('PRESENSI', { jadwalId: jadwal.id, nama: jadwal.nama, metode: 'qr', distance: Math.round(dist) });
 
       showModal('Presensi Tercatat',
         '<div class="list-item">' + ic('seal') +
-        '<div class="body"><strong>' + esc(payload.nama) + '</strong>' +
-        '<div class="meta">' + esc(payload.venue) + '</div>' +
+        '<div class="body"><strong>' + esc(jadwal.nama) + '</strong>' +
+        '<div class="meta">' + esc(jadwal.venue || '') + '</div>' +
         '<div class="meta">Jarak ' + dist.toFixed(1) + ' m · ' + fmtDateTime(pres.timestamp) + '</div>' +
         '<div class="meta">Tersimpan di perangkat, sinkron menyusul.</div></div></div>' +
         '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">' +
         ic('seal') + 'Selesai</button></div>');
+      renderActivePage();
     }, err => {
       toast(gpsErrorMessage(err), 'error');
-      addLog('PRESENSI_GAGAL', { reason: String((err && err.message) || err), jadwalId: payload.jadwalId });
+      addLog('PRESENSI_GAGAL', { reason: String((err && err.message) || err), jadwalId: jadwal.id });
     }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
     } catch (e) {
       toast(gpsErrorMessage(e), 'error');
       addLog('SCAN_ERROR', { error: String((e && e.message) || e) });
     }
   } catch (e) {
-    toast(e.message, 'error');
-    addLog('SCAN_ERROR', { error: e.message });
+    const pesan = (e && e.message) ? e.message : 'Kode QR tidak dapat dibaca';
+    toast(pesan, 'error');
+    addLog('SCAN_ERROR', { error: pesan });
   }
 }
+
+/* Ambil JSON bila teks memang berbentuk objek — untuk mendukung QR lama
+   yang menyimpan JSON mentah tanpa dibungkus base64. */
+function tryJsonText(t) {
+  const s = String(t || '').trim();
+  if (s.charAt(0) !== '{') return null;
+  try { JSON.parse(s); return s; } catch (e) { return null; }
+}
+
+/* Terjemahkan isi kode QR menjadi objek payload. Mendukung:
+   • format baru (ringkas)  : IGN1|idAcara|mulai|durasi|radius|lat|lng|sig
+   • format lama            : JSON mentah, atau base64(JSON) */
+function decodeQrText(raw) {
+  const text = String(raw == null ? '' : raw).replace(/^\uFEFF/, '').trim();
+  if (!text) throw new Error('Kode QR kosong — silakan pindai ulang');
+
+  /* --- Format v2 (ringkas) --- */
+  if (text.indexOf('IGN1|') === 0 || text.indexOf('PRESENSI_IGNASIAN|') === 0) {
+    const p = text.split('|');
+    const mulai = Number(p[2]);
+    if (p.length < 7 || !isFinite(mulai)) {
+      throw new Error('Format kode QR tidak lengkap — buat ulang QR pada menu Pembuat Kode QR');
+    }
+    return {
+      type: 'PRESENSI_IGNASIAN', v: 2, jadwalId: p[1],
+      start: new Date(mulai).toISOString(),
+      durasi: Number(p[3]) || 60,
+      radius: Number(p[4]) || 50,
+      lat: Number(p[5]),
+      lng: Number(p[6]),
+      sig: p[7] || '',
+      nama: '', venue: ''
+    };
+  }
+
+  let obj = null;
+
+  /* --- Format lama: JSON mentah --- */
+  const json = tryJsonText(text);
+  if (json) { try { obj = JSON.parse(json); } catch (e) { obj = null; } }
+
+  /* --- Format lama: base64(JSON) --- */
+  if (!obj) {
+    const b64 = text.replace(/\s+/g, '');
+    if (/^[A-Za-z0-9+/=]+$/.test(b64) && b64.length >= 8) {
+      const kandidat = [];
+      try { kandidat.push(decodeURIComponent(escape(atob(b64)))); } catch (e) { /* abaikan */ }
+      try { kandidat.push(atob(b64)); } catch (e) { /* abaikan */ }
+      for (let i = 0; i < kandidat.length && !obj; i++) {
+        const t = tryJsonText(kandidat[i]);
+        if (t) { try { obj = JSON.parse(t); } catch (e) { obj = null; } }
+      }
+    }
+  }
+
+  if (!obj) {
+    throw new Error('Bukan kode QR Presensi Ignasian. Pastikan Anda memindai kode QR ' +
+      'yang dicetak dari menu Pembuat Kode QR.');
+  }
+  if (obj.type !== 'PRESENSI_IGNASIAN') throw new Error('Bukan kode QR Presensi Ignasian');
+  if (!obj.jadwalId && !obj.nama) {
+    throw new Error('Kode QR tidak menyebut acara — buat ulang QR pada menu Pembuat Kode QR');
+  }
+  return obj;
+}
+
+/* Cocokkan isi QR dengan acara. Data acara di perangkat yang menjadi sumber
+   kebenaran, sehingga waktu/radius/koordinat selalu mengikuti jadwal terkini
+   meskipun QR dicetak lama. */
+function resolveJadwal(payload) {
+  const list = state.jadwal || [];
+  const byId = list.find(j => String(j.id) === String(payload.jadwalId));
+  if (byId) return byId;
+
+  /* Cadangan: nama acara + waktu mulai hampir sama (perangkat yang belum
+     menarik ulang acara setelah sinkronisasi). */
+  const startQr = Date.parse(payload.start || 0) || 0;
+  if (payload.nama) {
+    const byNama = list.find(j =>
+      String(j.nama || '').trim().toLowerCase() === String(payload.nama).trim().toLowerCase() &&
+      Math.abs((Date.parse(j.tanggal) || 0) - startQr) <= 12 * 3600 * 1000);
+    if (byNama) return byNama;
+  }
+  /* Cadangan terakhir: hanya ada satu acara yang berjalan pada waktu QR dibuat */
+  if (startQr) {
+    const berjalan = list.filter(j => {
+      const s = Date.parse(j.tanggal) || 0;
+      return !!s && startQr >= s - 5 * 60000 && startQr <= s + (Number(j.durasi) || 60) * 60000;
+    });
+    if (berjalan.length === 1) return berjalan[0];
+  }
+  return null;
+}
+/* ---------- 17b. PILIHAN ACARA PADA HALAMAN PRESENSI --------------------
+   Pintasan dari Beranda ("Sesi Hari Ini") mendarat di sini dengan acara
+   sudah TERPILIH. Pemilihan ini tersimpan agar tetap berlaku setelah
+   halaman disegarkan, dan dipakai sebagai pemeriksaan saat memindai QR. */
+function namaJadwal(id) {
+  const j = (state.jadwal || []).find(x => String(x.id) === String(id));
+  return j ? j.nama : '';
+}
+
+async function restoreActiveJadwal() {
+  const id = await kvGet('activeJadwal', null);
+  state.activeJadwalId = (id && (state.jadwal || []).some(j => String(j.id) === String(id)))
+    ? String(id) : null;
+}
+
+async function setActiveJadwal(id, diam) {
+  state.activeJadwalId = id ? String(id) : null;
+  await kvSet('activeJadwal', state.activeJadwalId);
+  if (state.activePage === 'presensi') renderPresensiSesi();
+  if (!diam) {
+    const j = (state.jadwal || []).find(x => String(x.id) === state.activeJadwalId);
+    toast(j ? 'Acara dipilih: ' + j.nama : 'Pilihan acara dibatalkan', j ? 'success' : 'info');
+    renderActivePage();
+  }
+}
+
+/* Pintasan Beranda → halaman Presensi untuk acara yang diketuk */
+function bukaPresensiSesi(id) {
+  if (!state.currentUser) return;
+  setActiveJadwal(id, true).then(() => {
+    showPage('presensi');
+    const j = (state.jadwal || []).find(x => String(x.id) === String(id));
+    if (j) toast('Siap memindai QR untuk: ' + j.nama, 'success');
+  });
+}
+
+/* Pintasan Beranda → Pembuat Kode QR untuk acara yang diketuk (staff) */
+function bukaQrSesi(id) {
+  if (!isStaff()) { toast('Hanya Administrator & Pengurus yang dapat membuat QR', 'error'); return; }
+  showPage('qr-gen');
+  const sel = $('qrJadwal');
+  if (sel) sel.value = id;
+  generateQR();
+}
+
+/* Kartu "Acara yang Dipindai" — daftar acara hari ini yang dapat dipilih */
+function renderPresensiSesi() {
+  const box = $('presensiSesiList');
+  if (!box) return;
+  const sesi = todayJadwalList();
+
+  if (!sesi.length) {
+    box.innerHTML = '<div class="empty">' + ic('horarium', 'ic-lg') + '<div>Tidak ada acara hari ini</div>' +
+      (state.activeJadwalId && namaJadwal(state.activeJadwalId)
+        ? '<div class="tiny mt-6">Acara terpilih: ' + esc(namaJadwal(state.activeJadwalId)) + '</div>' : '') +
+      '</div>';
+    return;
+  }
+
+  box.innerHTML = sesi.map(j => {
+    const dipilih = String(state.activeJadwalId) === String(j.id);
+    const end = new Date(new Date(j.tanggal).getTime() + (Number(j.durasi) || 60) * 60000);
+    return `
+      <button class="pick-item${dipilih ? ' is-picked' : ''}" type="button" onclick="setActiveJadwal('${esc(j.id)}')">
+        ${ic(dipilih ? 'seal' : 'horarium')}
+        <div class="body">
+          <strong>${esc(j.nama)}</strong>
+          <div class="meta">${esc(j.venue || '')} · ${fmtTime(j.tanggal)}–${fmtTime(end)}</div>
+          <div class="meta">${dipilih ? 'Dipilih — QR milik acara lain akan ditolak' : 'Ketuk untuk memilih acara ini'}</div>
+        </div>
+      </button>`;
+  }).join('') + (state.activeJadwalId
+    ? '<button class="btn btn-ghost mt-6" type="button" onclick="setActiveJadwal(null)">Batalkan pilihan acara</button>'
+    : '<p class="tiny muted">Pilihan acara wajib diisi bila hari ini ada lebih dari satu acara. ' +
+      'Bila hanya satu acara, sistem akan memilihnya otomatis saat Anda memindai.</p>');
+}
+
 /* ---------- 18. RIWAYAT PRESENSI --------------------------------------- */
 function renderRiwayat() {
   const body = $('riwayatBody');
   const title = $('riwayatTitle');
   const scope = $('riwayatScope');
   const staffView = isStaff();
+  const adminView = isAdmin();
   const mine = (staffView ? state.presensi.slice() : state.presensi.filter(p => p.userId === state.currentUser.id))
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const kolom = adminView ? 6 : 5;
   if (title) title.textContent = staffView ? 'Riwayat Presensi (Semua)' : 'Riwayat Presensi Saya';
-  if (scope) scope.textContent = staffView ? 'Seluruh presensi peserta — Admin & Pengurus (read-only).' : 'Presensi pribadi Anda.';
+  if (scope) {
+    scope.textContent = adminView
+      ? 'Seluruh presensi peserta — Anda dapat menghapus catatan yang keliru.'
+      : (staffView ? 'Seluruh presensi peserta — Pengurus hanya dapat melihat (baca saja).'
+        : 'Presensi pribadi Anda.');
+  }
 
   if (!mine.length) {
-    body.innerHTML = '<tr><td colspan="5"><div class="empty">' + ic('codex', 'ic-lg') +
+    body.innerHTML = '<tr><td colspan="' + kolom + '"><div class="empty">' + ic('codex', 'ic-lg') +
       '<div>Belum ada riwayat presensi</div></div></td></tr>';
     return;
   }
@@ -1194,7 +1673,12 @@ function renderRiwayat() {
         <div class="tiny muted">${esc(p.venue || '')}</div></td>
       <td data-label="Status"><span class="badge badge-${esc(p.status)}">${esc(p.status)}</span></td>
       <td data-label="Nama">${esc(p.userName || '-')}</td>
-      <td data-label="Metode">Pindai QR</td>
+      <td data-label="Metode">Pindai QR</td>${adminView ? `
+      <td data-label="Kelola">
+        <button class="btn btn-danger btn-sm" type="button" onclick="deletePresensi('${esc(p.id)}')">
+          ${ic('scrap')}Hapus
+        </button>
+      </td>` : ''}
     </tr>`).join('');
 }
 
@@ -1409,7 +1893,7 @@ function saveEditPresensi(id) {
   enqueue('presensi', p);
   addLog('UPDATE_PRESENSI', { presensiId: p.id, status: p.status });
   closeModal();
-  renderLaporanAcara();
+  renderActivePage();
   toast('Presensi diperbarui', 'success');
 }
 
@@ -1431,11 +1915,11 @@ function confirmDeletePresensi(id) {
   const p = state.presensi[idx];
   state.presensi.splice(idx, 1);
   saveLocal();
-  queueDelete('presensi', id);
+  queueDelete('presensi', id);   /* tandai di server agar tidak "hidup kembali" */
   addLog('DELETE_PRESENSI', { presensiId: id, user: p.userName });
   closeModal();
-  renderLaporanAcara();
-  toast('Presensi dihapus', 'success');
+  renderActivePage();
+  toast('Presensi dihapus — berlaku di perangkat ini dan di server', 'success');
 }
 
 function generateLaporan() {
@@ -1478,11 +1962,59 @@ function generateLaporan() {
 
   addLog('VIEW_LAPORAN', { from: from.toISOString(), to: to.toISOString(), scope: isStaff() ? 'semua' : 'pribadi' });
 }
+/* ---------- 20b. KATA SANDI (HANYA ADMINISTRATOR) ----------------------- */
+/* Kata sandi disimpan ganda: passHash (SHA-256) untuk masuk, dan passPlain
+   agar Administrator dapat membantu pemilik akun yang lupa. Seluruh
+   tindakan melihat/mengubah tercatat pada Log Sistem. */
+
+function acakKarakter(pool) {
+  if (window.crypto && crypto.getRandomValues) {
+    const a = new Uint32Array(1);
+    crypto.getRandomValues(a);
+    return pool.charAt(a[0] % pool.length);
+  }
+  return pool.charAt(Math.floor(Math.random() * pool.length));
+}
+
+function passwordAcak() {
+  const huruf = 'abcdefghijkmnpqrstuvwxyz';
+  const angka = '23456789';
+  let hasil = '';
+  for (let i = 0; i < 5; i++) hasil += acakKarakter(huruf) + acakKarakter(angka);
+  return hasil;
+}
+
+function pesanKirimPassword(u) {
+  return 'Halo ' + (u.nama || '') + ', berikut password akun Presensi Ignasian Anda (@' +
+    (u.username || '') + '): ' + (u.passPlain || '') +
+    '. Silakan masuk kembali, dan mohon jaga kerahasiaannya. Terima kasih.';
+}
+
+/* Tampilkan/sembunyikan satu kata sandi pada tabel Administrator */
+function togglePassword(id) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat melihat password', 'error'); return; }
+  const u = state.users.find(x => String(x.id) === String(id));
+  if (!u) return;
+  const el = $('pw-' + id);
+  if (!el) return;
+  const tampil = el.getAttribute('data-shown') === '1';
+  if (tampil) {
+    el.textContent = '••••••••';
+    el.classList.add('pw-hidden');
+    el.setAttribute('data-shown', '0');
+    return;
+  }
+  el.textContent = u.passPlain || 'belum tercatat';
+  el.classList.remove('pw-hidden');
+  el.setAttribute('data-shown', '1');
+  try { addLog('VIEW_PASSWORD', { userId: u.id, username: u.username }); } catch (e) { /* abaikan */ }
+}
+
 /* ---------- 20. MANAJEMEN PESERTA (ADMIN) ------------------------------ */
 function renderUsers() {
   const body = $('usersBody');
   if (!state.users.length) {
-    body.innerHTML = '<tr><td colspan="4"><div class="empty">' + ic('halopair', 'ic-lg') +
+    body.innerHTML = '<tr><td colspan="5"><div class="empty">' + ic('halopair', 'ic-lg') +
       '<div>Belum ada pengguna</div></div></td></tr>';
     return;
   }
@@ -1492,11 +2024,26 @@ function renderUsers() {
         <div class="tiny muted">@${esc(u.username)}</div></td>
       <td data-label="Peran"><span class="badge badge-role">${esc(roleName(u.role))}</span></td>
       <td data-label="Status"><span class="badge badge-${esc(u.status)}">${esc(u.status)}</span></td>
+      <td data-label="Password">
+        <span class="pw-cell${u.passPlain ? ' pw-hidden' : ''}" id="pw-${esc(u.id)}">${
+          u.passPlain ? '••••••••' : '<span class="tiny muted">belum tercatat</span>'}</span>
+        <div class="row-tight mt-6">
+          ${u.passPlain ? `<button class="btn btn-outline btn-sm" type="button" onclick="togglePassword('${esc(u.id)}')">
+            ${ic('eye')}<span>Lihat</span>
+          </button>` : ''}
+          <button class="btn btn-ghost btn-sm" type="button" onclick="showResetPassword('${esc(u.id)}')">
+            ${ic('keyring')}Atur Ulang
+          </button>
+        </div>
+      </td>
       <td data-label="Tindakan">
         <div class="row-tight">
           <button class="btn btn-outline btn-sm" onclick="toggleUser('${esc(u.id)}')">
             ${ic(u.status === 'aktif' ? 'lamp' : 'lampoff')}${u.status === 'aktif' ? 'Nonaktifkan' : 'Aktifkan'}
           </button>
+          ${u.hpPlain ? `<button class="btn btn-gold btn-sm" type="button" onclick="waTo('${esc(u.hpPlain)}', '')">
+            ${ic('wa')}WhatsApp
+          </button>` : ''}
           ${u.id !== state.currentUser.id
       ? `<button class="btn btn-danger btn-sm" onclick="deleteUser('${esc(u.id)}')">${ic('scrap')}Hapus</button>`
       : ''}
@@ -1529,6 +2076,7 @@ async function registerUser() {
   const newUser = {
     id: uid(), nama: nama, username: username,
     passHash: await sha256(pass),
+    passPlain: pass,      /* salinan untuk pemulihan oleh Administrator */
     hpHash: await sha256(hp),
     hpPlain: hp,
     role: role, status: status, email: '',
@@ -1567,6 +2115,364 @@ function deleteUser(id) {
   addLog('DELETE_USER', { userId: id, username: u.username });
   renderUsers();
   toast('Pengguna dihapus', 'success');
+}
+
+/* Buka WhatsApp langsung dengan pesan siap kirim (dipakai pemulihan password) */
+function nomorWa(nomor) {
+  let n = String(nomor || '').replace(/\D/g, '');
+  if (n.charAt(0) === '0') n = '62' + n.slice(1);
+  else if (n.charAt(0) === '8') n = '62' + n;
+  return n;
+}
+
+function waTo(nomor, pesan) {
+  const n = nomorWa(nomor);
+  if (!n) { toast('Nomor HP tidak tersedia pada akun ini', 'error'); return; }
+  const url = 'https://wa.me/' + n + (pesan ? '?text=' + encodeURIComponent(pesan) : '');
+  window.open(url, '_blank', 'noopener');
+}
+
+/* Daftar seluruh kata sandi akun — khusus Administrator */
+function showAllPasswords() {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat melihat semua password', 'error'); return; }
+  if (!state.users.length) { toast('Belum ada akun', 'info'); return; }
+
+  const isi = state.users.map(u => `
+    <div class="list-item">
+      ${ic('keyring')}
+      <div class="body">
+        <strong>${esc(u.nama)}</strong>
+        <div class="meta">@${esc(u.username)} · ${esc(roleName(u.role))} · ${esc(u.status)}${
+          u.hpPlain ? ' · ' + esc(u.hpPlain) : ''}</div>
+        <div class="wa-box">${u.passPlain ? esc(u.passPlain)
+      : '<span class="tiny muted">Belum tercatat — gunakan tombol Atur Ulang</span>'}</div>
+        <div class="row-tight mt-6">
+          ${u.hpPlain && u.passPlain ? `<button class="btn btn-gold btn-sm" type="button" onclick="waTo('${esc(u.hpPlain)}', '${esc(pesanKirimPassword(u))}')">
+              ${ic('wa')}Kirim via WhatsApp
+            </button>` : ''}
+          <button class="btn btn-outline btn-sm" type="button" onclick="closeModal();showResetPassword('${esc(u.id)}')">
+            ${ic('keyring')}Atur Ulang
+          </button>
+        </div>
+      </div>
+    </div>`).join('');
+
+  try { addLog('VIEW_PASSWORD', { scope: 'semua-akun', jumlah: state.users.length }); } catch (e) { /* abaikan */ }
+  showModal('Semua Password Akun',
+    '<p class="tiny muted">Khusus Administrator. Salin seperlunya, lalu tutup jendela ini — ' +
+    'tindakan melihat password tercatat pada Log Sistem.</p>' +
+    '<div class="list scroll-y mt-10">' + isi + '</div>' +
+    '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">' +
+    ic('seal') + 'Tutup</button></div>');
+}
+
+/* Atur ulang password satu akun (kemudian dikirim ke pemilik via WhatsApp) */
+function showResetPassword(id) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat mengatur ulang password', 'error'); return; }
+  const u = state.users.find(x => String(x.id) === String(id));
+  if (!u) { toast('Akun tidak ditemukan', 'error'); return; }
+  showModal('Atur Ulang Password',
+    '<p class="small">Akun: <strong>' + esc(u.nama) + '</strong> (@' + esc(u.username) + ')</p>' +
+    '<div class="form-group mt-10"><label for="resetPassBaru">Password baru</label>' +
+    '<input type="text" id="resetPassBaru" class="form-control" value="' + esc(passwordAcak()) + '" ' +
+    'autocomplete="new-password" autocapitalize="off" spellcheck="false" /></div>' +
+    '<div class="row-tight"><button class="btn btn-outline btn-sm" type="button" onclick="isiPasswordAcak()">' +
+    ic('sync') + 'Buatkan Lagi</button></div>' +
+    '<p class="tiny muted mt-10">Setelah disimpan, bagikan password kepada pemilik akun melalui WhatsApp ' +
+    '(tombolnya tersedia di layar berikutnya).</p>' +
+    '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Batal</button>' +
+    '<button class="btn btn-primary" onclick="simpanResetPassword(\'' + esc(u.id) + '\')">' +
+    ic('seal') + 'Simpan</button></div>');
+}
+
+function isiPasswordAcak() {
+  const el = $('resetPassBaru');
+  if (el) { el.value = passwordAcak(); el.focus(); }
+}
+
+async function simpanResetPassword(id) {
+  if (!isAdmin()) { toast('Hanya Administrator yang dapat mengatur ulang password', 'error'); return; }
+  const u = state.users.find(x => String(x.id) === String(id));
+  if (!u) { toast('Akun tidak ditemukan', 'error'); return; }
+  const baru = $('resetPassBaru') ? $('resetPassBaru').value.trim() : '';
+  if (!baru || baru.length < 6) { toast('Password minimal 6 karakter', 'error'); return; }
+
+  u.passPlain = baru;
+  u.passHash = await sha256(baru);
+  stamp(u);
+  saveLocal();
+  enqueue('user', u);
+  addLog('RESET_PASSWORD', { userId: u.id, username: u.username });
+  renderUsers();
+
+  showModal('Password Berhasil Diatur Ulang',
+    '<p class="small">Password baru untuk <strong>' + esc(u.nama) + '</strong> (@' + esc(u.username) + '):</p>' +
+    '<div class="wa-box">' + esc(baru) + '</div>' +
+    (u.hpPlain
+      ? '<div class="row-tight mt-14"><button class="btn btn-gold" type="button" ' +
+        'onclick="waTo(\'' + esc(u.hpPlain) + '\', \'' + esc(pesanKirimPassword(u)) + '\')">' +
+        ic('wa') + 'Kirim via WhatsApp ke ' + esc(u.hpPlain) + '</button></div>'
+      : '<p class="tiny muted mt-10">Akun ini belum memiliki nomor HP — bagikan password secara langsung.</p>') +
+    '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">' +
+    ic('seal') + 'Selesai</button></div>');
+}
+
+/* ---------- 11c. LUPA PASSWORD (LAYAR MASUK) ---------------------------- */
+/* Pengurus/Peserta memasukkan nomor HP/WA terdaftar → permintaan masuk ke
+   Administrator yang sedang masuk → Administrator menghubungi via WhatsApp. */
+
+function normalisasiHp(input) {
+  return String(input || '').replace(/\D/g, '');
+}
+
+/* Cari akun berdasarkan nomor HP/WA (mendukung awalan 0 / 62 / 8) */
+function cariUserByHp(input) {
+  const n = normalisasiHp(input);
+  if (n.length < 8) return null;
+  const kandidat = new Set([n]);
+  if (n.slice(0, 2) === '62') kandidat.add('0' + n.slice(2));
+  else if (n.charAt(0) === '0') kandidat.add('62' + n.slice(1));
+  if (n.charAt(0) === '0') kandidat.add(n.slice(1));
+  else if (n.charAt(0) === '6') kandidat.add(n.slice(2));   /* 62812… → 812… */
+
+  return (state.users || []).find(u => {
+    const simpanan = [
+      normalisasiHp(u.hpPlain),
+      normalisasiHp(u.hpHash)     /* pencocokan hash hanya bila input = hash (tidak lazim) */
+    ];
+    return simpanan.some(s => s && kandidat.has(s));
+  }) || null;
+}
+
+function showForgotPassword() {
+  showModal('Lupa Password?',
+    '<p class="small">Tidak apa-apa — semuanya bisa dibantu. Masukkan <strong>nomor HP/WA</strong> ' +
+    'yang terdaftar pada akun Anda, lalu kirim permintaan.</p>' +
+    '<div class="form-group mt-10"><label for="lupaHp">Nomor HP / WhatsApp</label>' +
+    '<input type="tel" id="lupaHp" class="form-control" placeholder="08xxxxxxxxxx" ' +
+    'autocomplete="tel" inputmode="tel" /></div>' +
+    '<p class="tiny muted">Administrator yang sedang masuk akan menerima pemberitahuan di aplikasi ini, ' +
+    'lalu menghubungi Anda lewat WhatsApp dengan password Anda.</p>' +
+    '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Batal</button>' +
+    '<button class="btn btn-primary" id="btnLupaKirim" onclick="kirimPermintaanLupa()">' +
+    ic('keyring') + 'Kirim Permintaan</button></div>');
+  setTimeout(() => { const el = $('lupaHp'); if (el) el.focus(); }, 120);
+}
+
+async function kirimPermintaanLupa() {
+  const input = $('lupaHp');
+  const hp = normalisasiHp(input ? input.value : '');
+  if (hp.length < 8) { toast('Masukkan nomor HP/WA yang terdaftar (minimal 8 angka)', 'error'); return; }
+
+  const btn = $('btnLupaKirim');
+  if (btn) { btn.disabled = true; btn.textContent = 'Mengirim…'; }
+  try {
+    const user = cariUserByHp(hp);
+    if (!user) {
+      toast('Nomor ini tidak terdaftar pada akun mana pun. Periksa kembali, atau hubungi Administrator.', 'error');
+      return;
+    }
+
+    /* Jangan duplikat: tutup permintaan lama yang masih menunggu */
+    state.requests = (state.requests || []).filter(r =>
+      !(String(r.userId) === String(user.id) && r.status === 'menunggu'));
+
+    const now = new Date().toISOString();
+    const req = {
+      id: uid(),
+      userId: user.id,
+      nama: user.nama,
+      username: user.username,
+      role: user.role,
+      hp: user.hpPlain || String(input.value).trim(),
+      status: 'menunggu',
+      ts: now,
+      updatedAt: now
+    };
+    state.requests.push(req);
+    saveLocal();
+    enqueue('request', req);
+
+    /* Catatan agar Administrator melihatnya pada Log & Aktivitas Terbaru */
+    addLog('RESET_REQUEST', { nama: user.nama, username: user.username, hp: req.hp });
+    flushQueue();
+
+    showModal('Permintaan Terkirim',
+      '<div class="list-item">' + ic('keyring') + '<div class="body">' +
+      '<strong>Terima kasih, ' + esc(user.nama) + '.</strong>' +
+      '<div class="meta">Permintaan Anda sudah diteruskan ke Administrator.</div>' +
+      '<div class="meta">Administrator akan menghubungi Anda melalui WhatsApp di nomor ' +
+      esc(req.hp) + ' — mohon ditunggu, ya.</div>' +
+      '</div></div>' +
+      (isOnline() ? '' : '<p class="tiny muted mt-6">Perangkat sedang luring — permintaan akan ' +
+        'terkirim otomatis begitu ada koneksi.</p>') +
+      '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">' +
+      ic('seal') + 'Siap, Saya Tunggu</button></div>');
+    if (btn) { btn.disabled = false; }
+  } catch (e) {
+    toast('Permintaan gagal dikirim — coba lagi', 'error');
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ---------- 11d. PENANGANAN PERMINTAAN (HANYA ADMIN) -------------------- */
+function pendingResetRequests() {
+  return (state.requests || [])
+    .filter(r => r.status === 'menunggu')
+    .sort((a, b) => (Date.parse(b.ts || b.updatedAt || 0) || 0) - (Date.parse(a.ts || a.updatedAt || 0) || 0));
+}
+
+/* Pemberitahuan saat permintaan baru masuk (dipanggil setelah sinkronisasi) */
+function notifyNewResetRequests() {
+  if (!isAdmin()) return;
+  const pending = pendingResetRequests();
+  const pernah = new Set((state.pendingRequestIds || []).map(String));
+  const baru = pending.filter(r => !pernah.has(String(r.id)));
+  state.pendingRequestIds = pending.map(r => String(r.id));
+  if (pernah.size && baru.length) {
+    toast(baru.length + ' permintaan lupa password baru — cek Beranda atau menu Data Peserta', 'info');
+    if (state.activePage === 'users') renderResetRequests();
+  }
+}
+
+/* Kartu permintaan pada Beranda Administrator */
+function resetRequestCard() {
+  if (!isAdmin()) return '';
+  const pending = pendingResetRequests();
+  if (!pending.length) return '';
+  return cardWrap('keyring', 'Permintaan Lupa Password (' + pending.length + ')',
+    '<div class="list">' + pending.slice(0, 5).map(r => `
+      <div class="list-item">
+        ${ic('keyring')}
+        <div class="body">
+          <strong>${esc(r.nama || r.username || '-')}</strong>
+          <div class="meta">@${esc(r.username || '-')} · ${esc(roleName(r.role))} · ${esc(r.hp || 'tanpa nomor')}</div>
+          <div class="meta">diminta ${fmtDateTime(r.ts || r.updatedAt)}</div>
+          <div class="row-tight mt-6">
+            <button class="btn btn-gold btn-sm" type="button" onclick="bukaWaPermintaan('${esc(r.id)}')">
+              ${ic('wa')}Hubungi via WhatsApp
+            </button>
+            <button class="btn btn-outline btn-sm" type="button" onclick="tandaiRequestSelesai('${esc(r.id)}')">
+              ${ic('seal')}Selesai
+            </button>
+          </div>
+        </div>
+      </div>`).join('') + '</div>' +
+    '<p class="tiny muted mt-10">Seluruh permintaan tersedia pada menu <strong>Lainnya → Data Peserta</strong>.</p>');
+}
+
+/* Daftar permintaan pada halaman Data Peserta (Administrator) */
+function renderResetRequests() {
+  const box = $('resetRequestList');
+  if (!box) return;
+  if (!isAdmin()) { box.innerHTML = ''; return; }
+
+  const menunggu = pendingResetRequests();
+  const selesai = (state.requests || [])
+    .filter(r => r.status !== 'menunggu')
+    .sort((a, b) => (Date.parse(b.handledAt || b.updatedAt || 0) || 0) - (Date.parse(a.handledAt || a.updatedAt || 0) || 0))
+    .slice(0, 10);
+
+  if (!menunggu.length && !selesai.length) {
+    box.innerHTML = '<div class="empty">' + ic('keyring', 'ic-lg') +
+      '<div>Belum ada permintaan lupa password</div></div>';
+    return;
+  }
+
+  box.innerHTML = (menunggu.length
+    ? '<div class="list">' + menunggu.map(r => `
+      <div class="list-item">
+        ${ic('keyring')}
+        <div class="body">
+          <strong>${esc(r.nama || r.username || '-')}</strong> <span class="badge badge-izin">menunggu</span>
+          <div class="meta">@${esc(r.username || '-')} · ${esc(roleName(r.role))} · ${esc(r.hp || 'tanpa nomor')}</div>
+          <div class="meta">diminta ${fmtDateTime(r.ts || r.updatedAt)}</div>
+          <div class="row-tight mt-6">
+            <button class="btn btn-gold btn-sm" type="button" onclick="bukaWaPermintaan('${esc(r.id)}')">
+              ${ic('wa')}Hubungi via WhatsApp
+            </button>
+            <button class="btn btn-outline btn-sm" type="button" onclick="tandaiRequestSelesai('${esc(r.id)}')">
+              ${ic('seal')}Tandai Selesai
+            </button>
+            <button class="btn btn-ghost btn-sm" type="button" onclick="hapusRequest('${esc(r.id)}')">
+              ${ic('scrap')}Hapus
+            </button>
+          </div>
+        </div>
+      </div>`).join('') + '</div>'
+    : '') +
+    (selesai.length
+      ? '<p class="tiny muted mt-10">Riwayat terakhir:</p><div class="list">' + selesai.map(r => `
+          <div class="list-item">
+            ${ic('seal')}
+            <div class="body">
+              <strong>${esc(r.nama || r.username || '-')}</strong> <span class="badge badge-hadir">selesai</span>
+              <div class="meta">@${esc(r.username || '-')} · ditindak ${fmtDateTime(r.handledAt || r.updatedAt)}</div>
+              <div class="row-tight mt-6">
+                <button class="btn btn-ghost btn-sm" type="button" onclick="hapusRequest('${esc(r.id)}')">
+                  ${ic('scrap')}Hapus
+                </button>
+              </div>
+            </div>
+          </div>`).join('') + '</div>'
+      : '');
+}
+
+/* Buka WhatsApp dengan pesan berisi password akun pemohon */
+function bukaWaPermintaan(id) {
+  if (!isAdmin()) { toast('Hanya Administrator', 'error'); return; }
+  const r = (state.requests || []).find(x => String(x.id) === String(id));
+  if (!r) { toast('Permintaan tidak ditemukan', 'error'); return; }
+  if (!r.hp) { toast('Permintaan ini tidak memiliki nomor HP', 'error'); return; }
+
+  const u = (state.users || []).find(x => String(x.id) === String(r.userId)) || null;
+  const nama = (u && u.nama) || r.nama || '';
+  const username = (u && u.username) || r.username || '';
+  const pass = (u && u.passPlain) || '';
+
+  let pesan;
+  if (pass) {
+    pesan = 'Halo ' + nama + ', mengenai permintaan lupa password Anda (@' + username + '), ' +
+      'berikut password akun Presensi Ignasian Anda: ' + pass + '. ' +
+      'Silakan masuk kembali, dan mohon dijaga kerahasiaannya. Terima kasih.';
+  } else {
+    pesan = 'Halo ' + nama + ', mengenai permintaan lupa password Anda (@' + username + '), ' +
+      'mohon maaf password akun tidak tersimpan pada aplikasi. ' +
+      'Saya akan membantu membuatkan password baru segera. Terima kasih.';
+  }
+  waTo(r.hp, pesan);
+  if (!pass) {
+    toast('Password akun belum tercatat — gunakan tombol Atur Ulang pada tabel Data Peserta', 'info');
+  }
+}
+
+function tandaiRequestSelesai(id) {
+  if (!isAdmin()) { toast('Hanya Administrator', 'error'); return; }
+  const r = (state.requests || []).find(x => String(x.id) === String(id));
+  if (!r) { toast('Permintaan tidak ditemukan', 'error'); return; }
+  r.status = 'selesai';
+  r.handledBy = state.currentUser ? state.currentUser.id : null;
+  r.handledAt = new Date().toISOString();
+  stamp(r);
+  saveLocal();
+  enqueue('request', r);
+  addLog('REQUEST_DONE', { nama: r.nama, username: r.username });
+  renderResetRequests();
+  if (state.activePage === 'home') renderHome();
+  toast('Permintaan ditandai selesai', 'success');
+}
+
+function hapusRequest(id) {
+  if (!isAdmin()) { toast('Hanya Administrator', 'error'); return; }
+  const idx = (state.requests || []).findIndex(x => String(x.id) === String(id));
+  if (idx < 0) { toast('Permintaan tidak ditemukan', 'error'); return; }
+  state.requests.splice(idx, 1);
+  saveLocal();
+  queueDelete('requests', id);
+  addLog('DELETE_REQUEST', { requestId: id });
+  renderResetRequests();
+  if (state.activePage === 'home') renderHome();
+  toast('Permintaan dihapus', 'success');
 }
 
 /* ---------- 21. PROFIL -------------------------------------------------- */
@@ -1699,10 +2605,18 @@ function renderQrJadwalSelect() {
     .join('');
 }
 
+/* Tanda tangan kode QR — dibuat TETAP dari isi acara sehingga satu acara
+   selalu menghasilkan kode QR yang sama, dan perubahan acara (waktu/lokasi)
+   dapat terdeteksi ketika QR lama dipindai. */
+function qrSignature(j) {
+  return fallbackHash([String(j.id), String(j.tanggal), String(j.durasi),
+    String(j.radius), String(j.lat), String(j.lng)].join('|')).slice(0, 10);
+}
+
 function qrPayload(j) {
   return {
     type: 'PRESENSI_IGNASIAN',
-    v: 1,
+    v: 2,
     jadwalId: j.id,
     nama: j.nama,
     venue: j.venue,
@@ -1711,8 +2625,19 @@ function qrPayload(j) {
     radius: j.radius,
     start: j.tanggal,
     durasi: j.durasi,
-    sig: uid()
+    sig: qrSignature(j)
   };
+}
+
+/* Isi teks QR versi 2 — ringkas (± 100 karakter) agar hasil cetak tidak terlalu
+   padat dan tetap dapat dipindai dari jarak jauh, namun tetap mengikat QR
+   pada satu acara tertentu. */
+function qrText(j) {
+  const p = qrPayload(j);
+  const mulai = Date.parse(p.start) || 0;
+  if (!p.jadwalId || !isFinite(mulai)) return '';
+  return ['IGN1', p.jadwalId, mulai, Number(p.durasi) || 60, Number(p.radius) || 50,
+    Number(p.lat).toFixed(6), Number(p.lng).toFixed(6), p.sig].join('|');
 }
 
 function generateQR() {
@@ -1729,11 +2654,10 @@ function generateQR() {
     return;
   }
 
-  let qrData;
-  try {
-    qrData = btoa(unescape(encodeURIComponent(JSON.stringify(qrPayload(j)))));
-  } catch (e) {
-    toast('Data jadwal tidak dapat dikodekan: ' + e.message, 'error');
+  /* Isi QR versi 2 (ringkas) — format lama tetap didukung pemindai. */
+  const qrData = qrText(j);
+  if (!qrData) {
+    toast('Data jadwal tidak dapat dikodekan — periksa kembali waktu & koordinat acara', 'error');
     return;
   }
   addLog('GENERATE_QR', { jadwalId: j.id, nama: j.nama });
@@ -1756,14 +2680,15 @@ function generateQR() {
   if (QRCode && typeof QRCode.toCanvas === 'function') {
     const holder = document.createElement('canvas');
     try {
+      /* 480 px — hasil unduh/cetak tetap tajam walau ditampilkan lebih kecil */
       QRCode.toCanvas(holder, qrData, {
-        width: 280, margin: 2,
+        width: 480, margin: 2,
         color: { dark: '#6E2632', light: '#FAF7F2' }
       }, (err, canvas) => {
         if (err || !canvas) { toast('QR gagal dibuat', 'error'); box.innerHTML = ''; return; }
         canvas.id = 'qrFinalCanvas';
-        canvas.style.width = '280px';
-        canvas.style.height = '280px';
+        canvas.style.width = '300px';
+        canvas.style.height = '300px';
         box.innerHTML = '';
         box.appendChild(canvas);
       });
@@ -1781,23 +2706,24 @@ function generateQR() {
       box.innerHTML = '';
       new QRCode(box, {
         text: qrData,
-        width: 280, height: 280,
+        width: 480, height: 480,
         colorDark: '#6E2632', colorLight: '#FAF7F2',
         correctLevel: (QRCode.CorrectLevel ? QRCode.CorrectLevel.M : 0)
       });
-      /* qrcodejs membuat <canvas> + <img> (async). Tandai keduanya agar
-         downloadQR()/printQR() bisa memakai salah satu. */
+      /* qrcodejs membuat <canvas> + <img> (async). Keduanya ditandai agar
+         downloadQR()/printQR() dapat memakai salah satu. Tampilan ditahan
+         300 px namun data piksel 480 px agar hasil cetak tetap tajam. */
       const tagCanvas = box.querySelector('canvas');
       if (tagCanvas) {
         tagCanvas.id = 'qrFinalCanvas';
-        tagCanvas.style.width = '280px';
-        tagCanvas.style.height = '280px';
+        tagCanvas.style.width = '300px';
+        tagCanvas.style.height = '300px';
       }
       const tagImg = box.querySelector('img');
       if (tagImg) {
         tagImg.id = 'qrFinalImg';
-        tagImg.style.width = '280px';
-        tagImg.style.height = '280px';
+        tagImg.style.width = '300px';
+        tagImg.style.height = '300px';
         /* Sebagian peramban menunda pengisian src — tunggu hingga terisi. */
         if (!tagImg.src && tagCanvas && typeof tagCanvas.toDataURL === 'function') {
           try { tagImg.src = tagCanvas.toDataURL('image/png'); } catch (e) { /* abaikan */ }
@@ -1877,11 +2803,15 @@ function renderLog() {
     return;
   }
   const list = $('logList');
-  if (!state.logs.length) {
+  const terurut = sortLogs(state.logs);       /* terbaru selalu di atas */
+  if (!terurut.length) {
     list.innerHTML = '<div class="empty">' + ic('ledger', 'ic-lg') + '<div>Belum ada catatan aktivitas</div></div>';
     return;
   }
-  list.innerHTML = '<div class="list">' + state.logs.slice(0, 100).map(l => `
+  const jumlah = terurut.length;
+  list.innerHTML = '<p class="tiny muted mb-8">Menampilkan ' + Math.min(100, jumlah) +
+    ' catatan terbaru dari ' + jumlah + ' catatan — urut terbaru di atas.</p>' +
+    '<div class="list">' + terurut.slice(0, 100).map(l => `
     <div class="list-item">
       ${ic('ledger')}
       <div class="body">
@@ -1898,34 +2828,47 @@ function renderLog() {
     </div>`).join('') + '</div>';
 }
 
+/* Hapus satu catatan aktivitas — berlaku di perangkat DAN di server.
+   Tanda kubur (tombstone) mencegah catatan kembali dari Supabase pada
+   sinkronisasi berikutnya; operasi hapus ikut masuk antrean. */
 function deleteLog(id) {
   if (!isAdmin()) { toast('Hanya Administrator yang dapat menghapus log', 'error'); return; }
   const idx = state.logs.findIndex(l => String(l.id) === String(id));
-  if (idx < 0) { toast('Log tidak ditemukan', 'error'); return; }
+  if (idx < 0) { toast('Catatan tidak ditemukan — mungkin sudah dihapus', 'error'); return; }
   state.logs.splice(idx, 1);
   saveLocal();
+  queueDelete('logs', id);
   renderLog();
-  toast('Satu log dihapus dari tampilan', 'success');
+  if (state.activePage === 'home') renderHome();
+  toast('Catatan aktivitas dihapus dari perangkat ini dan antre untuk dihapus dari server', 'success');
 }
 
 function clearLogs(all) {
   if (!isAdmin()) { toast('Hanya Administrator yang dapat menghapus log', 'error'); return; }
   if (!state.logs.length) { toast('Log sudah kosong', 'info'); return; }
+  const jumlah = state.logs.length;
   showModal('Hapus Log',
-    '<p>Hapus <strong>seluruh ' + state.logs.length + ' catatan log</strong> dari tampilan peranti ini?</p>' +
-    '<p class="tiny muted">Catatan: log yang sudah terkirim ke server tidak ikut terhapus.</p>' +
+    '<p>Hapus <strong>seluruh ' + jumlah + ' catatan log</strong>?</p>' +
+    '<p class="tiny muted">Catatan akan dihapus dari perangkat ini dan dari server ' +
+    '(maksimal 200 catatan terbaru agar antrean sinkron tetap ringan), sehingga tidak kembali muncul.</p>' +
     '<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal()">Batal</button>' +
     '<button class="btn btn-danger" onclick="confirmClearLogs()">' + ic('scrap') + 'Hapus Semua</button></div>');
 }
 
 function confirmClearLogs() {
   if (!isAdmin()) { toast('Hanya Administrator yang dapat menghapus log', 'error'); return; }
-  state.logs = [];
+  if (!state.logs.length) { toast('Log sudah kosong', 'info'); return; }
+  const total = state.logs.length;
+  const dihapus = sortLogs(state.logs).slice(0, 200);     /* terbaru lebih dahulu */
+  const idHapus = dihapus.map(l => l.id);
+  const set = new Set(idHapus.map(String));
+  state.logs = state.logs.filter(l => !set.has(String(l.id)));
   saveLocal();
+  queueDeleteMany('logs', idHapus);   /* tanda kubur + operasi hapus ke server */
   closeModal();
   renderLog();
-  renderHome();
-  toast('Seluruh log dihapus dari tampilan', 'success');
+  if (state.activePage === 'home') renderHome();
+  toast(dihapus.length + ' dari ' + total + ' catatan aktivitas dihapus', 'success');
 }
 /* ---------- 25. PENGATURAN -------------------------------------------- */
 function setText(id, txt) { const el = $(id); if (el) el.textContent = txt; }
@@ -2017,10 +2960,14 @@ function renderLainnya() {
   }
 }
 
-/* ---------- 27. BANTUAN ------------------------------------------------ */
+/* ---------- 27. BANTUAN -------------------------------------------------- */
 function renderBantuan() {
+  /* Panduan disaring sesuai peran: blok bertanda data-role pada index.html
+     hanya tampil untuk peran yang bersangkutan. */
+  applyRoleVisibility();
   setText('bantuanVersi', 'Versi ' + CONFIG.VERSION);
-  setText('bantuanPeran', roleName(state.currentUser.role));
+  const role = state.currentUser ? state.currentUser.role : '';
+  setText('bantuanPeran', roleName(role));
   setText('bantuanLuring', apiReady()
     ? (isOnline()
       ? 'Peranti daring — data disinkronkan otomatis ke Supabase.'
@@ -2070,8 +3017,28 @@ async function init() {
   applyRoleVisibility();
   updateSyncUI();
   setupConnectivity();
+  startSessionWatch();          /* pengawas time-out login: 6 jam / 12 jam */
+  await restoreActiveJadwal();  /* pintasan "Sesi Hari Ini" tetap tersimpan */
 
-  if (await checkSession()) showMainApp();
+  /* Halaman terakhir (dari #hash) DIPERTAHANKAN ketika halaman disegarkan —
+     pengguna tetap berada di halaman yang sama, tanpa kedipan ke layar masuk.
+     Hanya sesudah LOGIN penuh pengguna diarahkan ke Beranda. */
+  const bootPage = (location.hash || '').replace('#', '').trim();
+
+  if (await checkSession()) {
+    showMainApp(bootPage || 'home');
+  } else {
+    showLoginScreen();
+    if (_sessionExpiredAtBoot) {
+      showModal('Sesi Anda Berakhir',
+        '<p>Terima kasih atas kesetiaan Anda melayani hari ini.</p>' +
+        '<p class="small mt-6">Demi keamanan akun, sesi sebelumnya ditutup otomatis karena masa berlakunya habis. ' +
+        'Tidak ada data yang hilang — semuanya sudah tersimpan dan akan dikirim saat Anda masuk kembali.</p>' +
+        '<div class="modal-actions"><button class="btn btn-primary" onclick="closeModal()">' +
+        ic('keycross') + 'Mengerti, Masuk Kembali</button></div>');
+    }
+  }
+  endBoot();
 
   /* Sinkron di latar: kirim antrean lebih dahulu, lalu tarik data baru.
      Tidak menahan tampilan — aplikasi sudah dapat dipakai saat luring. */

@@ -35,7 +35,8 @@ const SUPA_TABLES = {
     table: 'users',
     fields: {
       id: 'id', nama: 'nama', username: 'username', passHash: 'pass_hash',
-      hpHash: 'hp_hash', hpPlain: 'hp_plain', role: 'role', status: 'status',
+      passPlain: 'pass_plain', hpHash: 'hp_hash', hpPlain: 'hp_plain',
+      role: 'role', status: 'status',
       email: 'email', createdAt: 'created_at', updatedAt: 'updated_at'
     },
     numeric: []
@@ -68,12 +69,24 @@ const SUPA_TABLES = {
     },
     numeric: [],
     json: ['details']
+  },
+  /* Permintaan pemulihan kata sandi ("Lupa password?") — dibuat perangkat
+     pengguna saat keluar, dibaca & ditindaklanjuti Administrator. */
+  requests: {
+    table: 'password_requests',
+    fields: {
+      id: 'id', userId: 'user_id', nama: 'nama', username: 'username',
+      role: 'role', hp: 'hp', status: 'status', ts: 'requested_at',
+      handledBy: 'handled_by', handledAt: 'handled_at', updatedAt: 'updated_at'
+    },
+    numeric: []
   }
 };
 
 /* Jenis operasi pada antrean (outbox) → nama koleksi/tabel Supabase */
 const SUPA_OUTBOX_TABLES = {
-  user: 'users', jadwal: 'jadwal', presensi: 'presensi', log: 'logs'
+  user: 'users', jadwal: 'jadwal', presensi: 'presensi', log: 'logs',
+  request: 'requests'
 };
 
 /* ---------- Konfigurasi & kesiapan ---------------------------------------- */
@@ -300,6 +313,11 @@ async function supaPullAll(opts) {
       order: 'timestamp.desc',
       maxRows: Math.max(10, Number(supaConfig().LOG_PULL_LIMIT) || 200)
     })]);
+  }
+  /* Permintaan pemulihan kata sandi hanya relevan (dan hanya patut dibaca)
+     oleh Administrator yang akan menindaklanjutinya. */
+  if (opts && opts.includeRequests) {
+    jobs.push(['requests', supaSelect('requests', { order: 'requested_at.desc', maxRows: 300 })]);
   }
 
   const settled = await Promise.allSettled(jobs.map(j => j[1]));

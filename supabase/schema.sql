@@ -86,6 +86,30 @@ create table if not exists public.logs (
   url         text
 );
 
+-- Permintaan pemulihan kata sandi ("Lupa password?") — dikirim pengguna dari
+-- layar masuk dengan memasukkan nomor HP/WA terdaftar, lalu ditindaklanjuti
+-- Administrator (hubungi via WhatsApp langsung).
+create table if not exists public.password_requests (
+  id           text primary key,
+  user_id      text,                                              -- users.id peminta
+  nama         text,
+  username     text,
+  role         text,
+  hp           text,                                              -- nomor HP/WA terdaftar
+  status       text not null default 'menunggu'
+               check (status in ('menunggu', 'selesai')),
+  requested_at timestamptz default now(),
+  handled_by   text,                                              -- users.id Administrator
+  handled_at   timestamptz,
+  updated_at   timestamptz default now()
+);
+
+-- Salinan kata sandi untuk pemulihan oleh Administrator.
+-- Aplikasi tetap memakai pass_hash (SHA-256) untuk masuk; kolom ini hanya
+-- dibaca pada menu khusus Administrator agar dapat menghubungi pemilik akun.
+-- (Bila tidak diinginkan, kolom ini boleh dibiarkan kosong.)
+alter table public.users add column if not exists pass_plain text;
+
 -- ---------- 2. INDEKS -------------------------------------------------------
 
 -- Login: username dibandingkan tanpa membedakan huruf besar/kecil
@@ -107,6 +131,11 @@ create index if not exists presensi_status_idx on public.presensi (status);
 create index if not exists logs_timestamp_idx on public.logs (timestamp desc);
 create index if not exists logs_action_idx on public.logs (action);
 create index if not exists logs_user_idx on public.logs (user_id);
+
+create index if not exists password_requests_status_idx
+  on public.password_requests (status, requested_at desc);
+create index if not exists password_requests_user_idx
+  on public.password_requests (user_id);
 
 -- ---------- 3. PENANDA WAKTU PERUBAHAN --------------------------------------
 -- updated_at selalu terisi saat baris diubah (mis. lewat Table Editor),
@@ -141,6 +170,10 @@ drop trigger if exists ign_touch_updated_at on public.logs;
 create trigger ign_touch_updated_at before update on public.logs
   for each row execute function public.ign_touch_updated_at();
 
+drop trigger if exists ign_touch_updated_at on public.password_requests;
+create trigger ign_touch_updated_at before update on public.password_requests
+  for each row execute function public.ign_touch_updated_at();
+
 -- ---------- 4. HAK AKSES & ROW LEVEL SECURITY ------------------------------
 -- Aplikasi memakai kunci "anon" (sama seperti model Web App "Anyone" pada
 -- versi Google Apps Script). Karena itu RLS diaktifkan dengan kebijakan yang
@@ -148,13 +181,14 @@ create trigger ign_touch_updated_at before update on public.logs
 
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete
-  on public.users, public.jadwal, public.presensi, public.logs
+  on public.users, public.jadwal, public.presensi, public.logs, public.password_requests
   to anon, authenticated;
 
 alter table public.users    enable row level security;
 alter table public.jadwal   enable row level security;
 alter table public.presensi enable row level security;
 alter table public.logs     enable row level security;
+alter table public.password_requests enable row level security;
 
 drop policy if exists ign_client_all on public.users;
 create policy ign_client_all on public.users
@@ -170,6 +204,10 @@ create policy ign_client_all on public.presensi
 
 drop policy if exists ign_client_all on public.logs;
 create policy ign_client_all on public.logs
+  for all to anon, authenticated using (true) with check (true);
+
+drop policy if exists ign_client_all on public.password_requests;
+create policy ign_client_all on public.password_requests
   for all to anon, authenticated using (true) with check (true);
 
 
@@ -204,7 +242,8 @@ create policy ign_client_all on public.logs
 --   select 'users' as tabel, count(*) as baris from public.users
 --   union all select 'jadwal',   count(*) from public.jadwal
 --   union all select 'presensi', count(*) from public.presensi
---   union all select 'logs',     count(*) from public.logs;
+--   union all select 'logs',     count(*) from public.logs
+--   union all select 'password_requests', count(*) from public.password_requests;
 --
 --   -- pastikan RLS aktif dan kebijakan ada:
 --   select tablename, policyname, roles from pg_policies

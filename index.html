@@ -30,11 +30,19 @@
 <script>
 /* Tema awal mengikuti preferensi sistem agar tidak berkedip.
    Tema yang tersimpan di DATABASE (IndexedDB) diterapkan segera
-   setelah database siap — lihat js/db.js + js/app.js init(). */
+   setelah database siap — lihat js/db.js + js/app.js init().
+
+   data-boot="1" menyalakan SELUBUNG AWAL: layar masuk & aplikasi utama
+   disembunyikan sampai aplikasi selesai memeriksa sesi. Dengan begitu tidak
+   ada kedipan "dialihkan ke halaman login" saat pengguna menyegarkan halaman. */
 (function () {
+  var root = document.documentElement;
+  root.setAttribute('data-boot', '1');
+  /* Selubung pengaman: bila aplikasi tidak selesai menyiapkan diri (mis. JS
+     gagal), selubung dilepas agar layar tidak terkunci. */
+  setTimeout(function () { try { root.removeAttribute('data-boot'); } catch (e) {} }, 6000);
   try {
     var t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
-    var root = document.documentElement;
     root.setAttribute('data-theme', t);
     var m = document.querySelector('meta[name="theme-color"]');
     if (m) m.setAttribute('content', t === 'dark' ? '#130F0C' : '#6E2632');
@@ -42,13 +50,15 @@
 })();
 </script>
 <script>
-/* Terapkan tema tersimpan dari database IndexedDB sedini mungkin (tanpa localStorage) */
+/* Terapkan tema tersimpan dari database IndexedDB sedini mungkin (tanpa localStorage).
+   Dibuka TANPA nomor versi agar tidak bentrok ketika skema database dinaikkan
+   (lihat DB_VERSION pada js/db.js). */
 (function () {
   try {
-    var req = indexedDB.open('ign_presensi_db', 1);
+    var req = indexedDB.open('ign_presensi_db');
     req.onupgradeneeded = function () {
       var db = req.result;
-      ['users','jadwal','presensi','logs','outbox','tombstones','kv'].forEach(function (s) {
+      ['users','jadwal','presensi','logs','outbox','tombstones','requests','kv'].forEach(function (s) {
         if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
       });
     };
@@ -71,6 +81,14 @@
 </script>
 </head>
 <body>
+
+<!-- Selubung awal: menutup layar sampai aplikasi selesai memeriksa sesi,
+     sehingga pengguna tidak melihat kedipan "dialihkan ke halaman login". -->
+<div id="bootVeil" class="boot-veil" aria-hidden="true"
+     style="position:fixed;inset:0;z-index:1200;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--head-bg,#6E2632)">
+  <div class="login-crest">IHS</div>
+  <p class="login-foot">Ad Maiorem Dei Gloriam</p>
+</div>
 
 <noscript>
   <p class="center mt-20" style="padding:24px;font-family:Georgia,serif">
@@ -100,9 +118,19 @@
       <span class="ic" data-ic="keycross"></span>Masuk
     </button>
 
+    <button class="btn btn-outline mt-10" id="btnForgot" type="button" onclick="showForgotPassword()">
+      <span class="ic" data-ic="keyring"></span>Lupa Password?
+    </button>
+
     <div class="divider"></div>
     <div class="login-hint">
       Belum punya akun? <br>  Hubungi Administrator atau Pengurus <br> untuk mendapatkan akses.
+      <br><br>
+      Lupa password? Ketuk <strong>Lupa Password?</strong> lalu masukkan nomor HP/WA yang terdaftar.
+      Administrator yang sedang masuk akan menerima pemberitahuan dan menghubungi Anda lewat WhatsApp.
+      <br><br>
+      Demi keamanan akun, sesi masuk berlaku <strong>6 jam</strong> untuk Pengurus &amp; Peserta dan
+      <strong>12 jam</strong> untuk Administrator.
     </div>
   </div>
   <p class="login-foot">Ite, Inflammate Omnia</p>
@@ -147,11 +175,23 @@
 
     <!-- ============ PRESENSI ============ -->
     <section id="page-presensi" class="page hidden">
+      <!-- Pintasan dari Beranda ("Sesi Hari Ini") mendarat di sini: acara yang
+           dipilih tampil sebagai penanda agar kode QR yang dipindai benar-benar
+           milik acara yang sedang berlangsung. -->
+      <div class="card" id="presensiSesiCard">
+        <div class="card-title"><span class="ic" data-ic="horarium"></span>Acara yang Dipindai</div>
+        <p class="card-sub" id="presensiSesiNote">
+          Pilih acara yang sedang berlangsung. Bila ada lebih dari satu acara pada waktu yang sama,
+          pilihan ini menyelaraskan acara dengan kode QR-nya sehingga presensi tidak tertukar.
+        </p>
+        <div id="presensiSesiList"></div>
+      </div>
+
       <div id="presensi-scan">
         <div class="card">
           <div class="card-title"><span class="ic" data-ic="matrix"></span>Pindai Kode QR Lokasi</div>
           <p class="card-sub">
-            Arahkan kamera ke kode QR yang tersedia di lokasi.
+            Arahkan kamera ke kode QR yang tersedia di lokasi. Sesi, radius, dan waktu kehadiran diperiksa otomatis.
           </p>
           <div id="scannerContainer" class="scan-frame hidden">
             <div id="qr-reader"></div>
@@ -164,9 +204,13 @@
             <span class="ic" data-ic="scrap"></span>Batalkan
           </button>
           <div class="divider"></div>
-          <p class="small muted center">Kamera bermasalah? Anda bisa mengunggah foto QR sebagai alternatif.</p>
-          <label class="btn btn-outline" for="qrFileInput" style="width:100%;justify-content:center">
-            <span class="ic" data-ic="matrix"></span>Pindai dari Foto
+          <p class="small muted center">Kamera bermasalah, atau kode QR tersimpan sebagai foto/screenshot?</p>
+          <label class="btn btn-outline" for="qrGalleryInput" style="width:100%;justify-content:center">
+            <span class="ic" data-ic="codex"></span>Buka Galeri &amp; Pilih Foto QR
+          </label>
+          <input type="file" id="qrGalleryInput" accept="image/*" class="hidden" onchange="scanFromFile(this)" />
+          <label class="btn btn-ghost mt-10" for="qrFileInput" style="width:100%;justify-content:center">
+            <span class="ic" data-ic="viewfinder"></span>Ambil Foto QR dengan Kamera
           </label>
           <input type="file" id="qrFileInput" accept="image/*" capture="environment" class="hidden" onchange="scanFromFile(this)" />
         </div>
@@ -178,9 +222,13 @@
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="codex"></span><span id="riwayatTitle">Riwayat Presensi Saya</span></div>
         <p class="card-sub" id="riwayatScope"></p>
+        <p class="tiny muted mb-8" data-role="admin">
+          Catatan Administrator: kolom <strong>Kelola</strong> memungkinkan Anda menghapus catatan presensi.
+          Penghapusan berlaku di perangkat ini maupun di server (sinkron otomatis).
+        </p>
         <div class="table-wrap">
           <table class="responsive">
-            <thead><tr><th>Tanggal</th><th>Sesi</th><th>Nama</th><th>Status</th><th>Metode</th></tr></thead>
+            <thead><tr><th>Tanggal</th><th>Sesi</th><th>Nama</th><th>Status</th><th>Metode</th><th data-role="admin">Kelola</th></tr></thead>
             <tbody id="riwayatBody"></tbody>
           </table>
         </div>
@@ -431,7 +479,7 @@
           <span class="ic" data-ic="cross"></span>
           <div class="body">
             <div class="name">Presensi Ignasian</div>
-            <div class="desc">Versi 4.5.0 · Ignatian Edition · © 2026</div>
+            <div class="desc">Versi 4.6.0 · Ignatian Edition · © 2026</div>
           </div>
         </div>
         <p class="tiny muted center">Ad Maiorem Dei Gloriam</p>
@@ -453,10 +501,13 @@
 
         <h3>Cara Melakukan Presensi dengan QR</h3>
         <ol class="steps">
-          <li>Buka menu <strong>Presensi</strong>.</li>
+          <li>Buka menu <strong>Presensi</strong>. Bila hari ini ada acara, Anda dapat langsung
+            mengetuk acara tersebut pada <strong>Beranda → Sesi Hari Ini</strong>.</li>
           <li>Izinkan akses kamera dan layanan lokasi pada perangkat Anda.</li>
           <li>Arahkan dan pindai kode QR yang tersedia di lokasi acara.</li>
-          <li>Sistem akan otomatis memeriksa sesi aktif, radius lokasi, dan memastikan tidak ada duplikasi data kehadiran.</li>
+          <li>Kode QR yang sudah tersimpan sebagai foto/screenshot juga dapat dipindai melalui
+            tombol <strong>Buka Galeri &amp; Pilih Foto QR</strong>.</li>
+          <li>Sistem akan otomatis memeriksa acara, sesi aktif, radius lokasi, dan memastikan tidak ada duplikasi data kehadiran.</li>
         </ol>
 
         <div class="divider"></div>
@@ -469,18 +520,37 @@
           <li><strong>Tips:</strong> Tambahkan aplikasi ini ke layar utama (home screen) perangkat Anda agar lebih mudah diakses kapan saja, bahkan tanpa koneksi.</li>
         </ul>
 
-        <div class="divider"></div>
-        <h3>Khusus Administrator &amp; Pengurus</h3>
-        <ul class="steps">
-          <li><strong>Kelola Jadwal:</strong> Menambahkan acara, menentukan lokasi, durasi, dan radius validasi.</li>
-          <li><strong>Buat Kode QR:</strong> Menghasilkan kode QR yang siap dicetak dan ditempel di lokasi acara.</li>
-        </ul>
-        <h3>Khusus Administrator</h3>
-        <ul class="steps">
-          <li><strong>Log Sistem:</strong> Melihat dan mengelola catatan aktivitas aplikasi.</li>
-          <li><strong>Daftar Hadir per Acara:</strong> Mengelola (mengubah/menghapus) dan mencetak data presensi.</li>
-          <li><strong>Sinkronisasi &amp; Penyimpanan Luring:</strong> Memantau status koneksi, antrean data, melakukan uji koneksi, dan memuat ulang data perangkat melalui menu Pengaturan.</li>
-        </ul>
+        <!-- Panduan ditampilkan hanya sesuai peran pengguna (lihat applyRoleVisibility). -->
+        <div data-role="peserta">
+          <div class="divider"></div>
+          <h3>Khusus Peserta</h3>
+          <ul class="steps">
+            <li><strong>Sesi Hari Ini</strong> — ketuk nama acara pada Beranda untuk langsung masuk ke halaman presensi acara tersebut.</li>
+            <li><strong>Riwayat</strong> — melihat seluruh presensi pribadi Anda.</li>
+            <li><strong>Lupa password</strong> — ketuk <strong>Lupa Password?</strong> pada layar masuk, masukkan nomor HP/WA yang terdaftar, lalu tunggu Administrator menghubungi Anda melalui WhatsApp.</li>
+          </ul>
+        </div>
+
+        <div data-role="staff">
+          <div class="divider"></div>
+          <h3>Khusus Administrator &amp; Pengurus</h3>
+          <ul class="steps">
+            <li><strong>Sesi Hari Ini</strong> — ketuk acara untuk membuka presensi acara tersebut, atau ketuk <strong>QR</strong> untuk langsung membuat kode QR acara itu.</li>
+            <li><strong>Kelola Jadwal</strong> — menambahkan acara, menentukan lokasi, durasi, dan radius validasi.</li>
+            <li><strong>Buat Kode QR</strong> — menghasilkan kode QR yang siap dicetak dan ditempel di lokasi acara. Satu acara memiliki kode QR-nya sendiri.</li>
+          </ul>
+        </div>
+
+        <div data-role="admin">
+          <h3>Khusus Administrator</h3>
+          <ul class="steps">
+            <li><strong>Log Sistem</strong> — melihat, menghapus satu per satu, atau membersihkan catatan aktivitas aplikasi.</li>
+            <li><strong>Daftar Hadir per Acara</strong> — mengelola (mengubah/menghapus) dan mencetak data presensi; penghapusan presensi juga tersedia pada menu <strong>Riwayat</strong>.</li>
+            <li><strong>Data Peserta</strong> — melihat daftar akun beserta passwordnya, mengatur ulang password, dan menangani permintaan lupa password dengan menghubungi pemilik akun melalui WhatsApp.</li>
+            <li><strong>Sinkronisasi &amp; Penyimpanan Luring</strong> — memantau status koneksi, antrean data, melakukan uji koneksi, dan memuat ulang data perangkat melalui menu Pengaturan.</li>
+            <li><strong>Masa berlaku sesi</strong> — Akun Administrator otomatis keluar setelah 12 jam, Pengurus &amp; Peserta setelah 6 jam, demi keamanan akun.</li>
+          </ul>
+        </div>
 
         <p class="tiny muted center mt-14">Ad Maiorem Dei Gloriam · Ite, Inflammate Omnia</p>
       </div>
@@ -533,14 +603,27 @@
 
     <!-- ============ MANAJEMEN PESERTA (ADMIN) ============ -->
     <section id="page-users" class="page hidden">
+      <!-- Pemberitahuan permintaan pemulihan kata sandi dari layar masuk -->
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="keyring"></span>Permintaan Lupa Password</div>
+        <p class="card-sub">
+          Pengurus &amp; Peserta yang lupa password mengirim permintaan dari layar masuk dengan
+          memasukkan nomor HP/WA terdaftar. Hubungi mereka lewat WhatsApp langsung dari daftar ini.
+        </p>
+        <div id="resetRequestList"></div>
+      </div>
+
       <div class="card">
         <div class="card-title"><span class="ic" data-ic="halopair"></span>Manajemen Data Peserta</div>
         <button class="btn btn-gold btn-sm mb-14" type="button" onclick="showPage('registrasi')">
           <span class="ic" data-ic="quill"></span>Tambah Pengguna Baru
         </button>
+        <button class="btn btn-outline btn-sm mb-14" type="button" onclick="showAllPasswords()">
+          <span class="ic" data-ic="eye"></span>Lihat Semua Password Akun
+        </button>
         <div class="table-wrap">
           <table class="responsive">
-            <thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Tindakan</th></tr></thead>
+            <thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Password</th><th>Tindakan</th></tr></thead>
             <tbody id="usersBody"></tbody>
           </table>
         </div>
