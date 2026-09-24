@@ -523,7 +523,16 @@ function setupConnectivity() {
       if (ev.data && ev.data.type === 'flush-outbox') syncNow(false);
     });
     navigator.serviceWorker.register('sw.js').then(reg => {
-      if ('sync' in reg) { try { reg.sync.register('ign-outbox'); } catch (e) { /* opsional */ } }
+      /* register() mengembalikan Promise — try/catch saja TIDAK menangkap
+         penolakan async (NotAllowedError: Permission denied di mode
+         emulator/HTTP/tanpa izin) sehingga muncul "Uncaught (in promise)".
+         Wajib .catch(). */
+      if ('sync' in reg) {
+        try {
+          var p = reg.sync.register('ign-outbox');
+          if (p && p.catch) p.catch(() => { /* sinkron latar opsional — abaikan */ });
+        } catch (e) { /* opsional */ }
+      }
     }).catch(e => console.warn('Service worker gagal didaftarkan', e));
   }
 }
@@ -858,6 +867,14 @@ function showMainApp(startPage) {
    tidak ada kedipan "dialihkan ke halaman login" saat halaman disegarkan. */
 function endBoot() {
   try { document.documentElement.removeAttribute('data-boot'); } catch (e) { /* abaikan */ }
+  /* Sabuk + suspender: aturan CSS memakai !important karena style inline
+     display:flex pada #bootVeil (index.html) mengalahkan display:none biasa.
+     Sembunyikan langsung via DOM agar veil TIDAK PERNAH macet menutupi layar
+     walau CSS gagal dimuat / di-cache lama oleh service worker. */
+  try {
+    var v = document.getElementById('bootVeil');
+    if (v) { v.style.display = 'none'; v.setAttribute('aria-hidden', 'true'); }
+  } catch (e) { /* abaikan */ }
 }
 
 /* Kartu pengguna di kepala aplikasi (tanpa indikator sinkron — sinkron berjalan di latar) */
@@ -2997,6 +3014,19 @@ function bindEvents() {
 }
 
 async function init() {
+  /* Pengaman terakhir: SELALU lepas selubung walau init() gagal di tengah
+     (IndexedDB diblokir, Supabase timeout, dsb.) — tanpa ini layar IHS macet. */
+  var _bootReleased = false;
+  function _releaseBootOnce() {
+    if (_bootReleased) return;
+    _bootReleased = true;
+    try { endBoot(); } catch (e) {
+      try { document.documentElement.removeAttribute('data-boot'); } catch (e2) {}
+    }
+  }
+  /* Jika init() macet > 8 detik (mis. IndexedDB diblokir), paksa lepas. */
+  try { setTimeout(_releaseBootOnce, 8000); } catch (e) {}
+  try {
   if (window.Icon) { Icon.mount(); Icon.hydrate(); }
 
   /* Muat database lebih dahulu: tema, sesi, dan seluruh data koleksi */
@@ -3038,16 +3068,34 @@ async function init() {
         ic('keycross') + 'Mengerti, Masuk Kembali</button></div>');
     }
   }
-  endBoot();
+  } catch (fatalErr) {
+    console.warn('init() gagal sebagian — tetap tampil agar tidak macet:', fatalErr);
+    try { selectById('loginTabUser', 'loginTabs'); } catch (e2) {}
+    try { showLogin(); } catch (e2) {}
+  } finally {
+    _releaseBootOnce();
+  }
 
   /* Sinkron di latar: kirim antrean lebih dahulu, lalu tarik data baru.
-     Tidak menahan tampilan — aplikasi sudah dapat dipakai saat luring. */
+     Tidak menahan tampilan — aplikasi sudah dapat dipakai saat luring.
+     Wajib .catch() agar kegagalan jaringan/izin tidak muncul sebagai
+     "Uncaught (in promise)" di console. */
   if (apiReady() && isOnline()) {
-    flushQueue().then(() => pullRemote(true));
+    try {
+      var _p = flushQueue().then(() => pullRemote(true));
+      if (_p && _p.catch) _p.catch(() => { /* luring / server menolak — coba lagi nanti */ });
+    } catch (e) { /* abaikan */ }
   }
 }
 
-init();
+init().catch(function (e) {
+  console.warn('init() gagal — paksa lepas selubung:', e);
+  try { document.documentElement.removeAttribute('data-boot'); } catch (e2) {}
+  try {
+    var v = document.getElementById('bootVeil');
+    if (v) v.style.display = 'none';
+  } catch (e3) {}
+});
 
 
 
