@@ -1,0 +1,44 @@
+-- ============================================================================
+--  PRESENSI IGNASIAN — Data Awal (opsional, DINONAKTIFKAN)
+--  ---------------------------------------------------------------------------
+--  Berkas ini SENGAJA tidak lagi berisi akun contoh berkredensial default.
+--  Alasannya (H3): kredensial bawaan admin/admin123, pengurus/pengurus123,
+--  peserta/peserta123 yang dulu ada di sini ikut ter-commit ke repo dan
+--  bila dijalankan di produksi memberi jalan masuk instan bagi siapa pun
+--  yang membaca riwayat Git. Lihat SECURITY.md.
+--
+--  Cara membuat akun pertama yang AMAN (pilih salah satu):
+--
+--  A) Lewat aplikasi (disarankan):
+--     1) Buka aplikasi sekali dalam mode mandiri (tanpa Supabase).
+--     2) Masuk dengan akun bawaan mode mandiri, lalu segera ubah kata
+--        sandinya lewat menu Administrator.
+--     3) Daftarkan akun lain lewat menu Registrasi / Input Nomor & Peran.
+--
+--  B) Lewat SQL manual (bila mode mandiri tidak tersedia):
+--     1) Buat hash SHA-256 kata sandi di Console peramban:
+--          const h = await crypto.subtle.digest('SHA-256',
+--            new TextEncoder().encode('KataSandiKuat-Min10Karakter'));
+--          [...new Uint8Array(h)].map(b =>
+--            b.toString(16).padStart(2,'0')).join('');
+--     2) Jalankan perintah berikut dengan hash hasil langkah 1
+--        (ganti <hash-baru>, nomor HP, dan email sesuai kebutuhan):
+--          insert into public.users
+--            (id, nama, username, pass_hash, hp_hash, hp_plain,
+--             role, status, email)
+--          values
+--            ('admin-' || substr(md5(random()::text), 1, 8),
+--             'Administrator', 'admin', '<hash-baru>',
+--             null, '08xxxxxxxxxx', 'admin', 'aktif',
+--             'admin@ignasian.id')
+--          on conflict do nothing;
+--     3) Masuk, lalu NONAKTIFKAN atau HAPUS akun contoh lain yang tidak
+--        dipakai. Jangan pernah memakai kata sandi sama dengan username.
+--
+--  Berkas ini idempoten dan hanya berisi komentar + satu SELECT verifikasi
+--  (read-only) di bawah, sehingga aman dijalankan berulang kali.
+-- ============================================================================
+
+-- Periksa hasilnya (read-only, aman dijalankan kapan pun):
+--   select username, nama, role, status from public.users order by role;
+

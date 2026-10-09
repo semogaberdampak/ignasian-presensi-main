@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<!-- KEAMANAN (Fase 4A): Content-Security-Policy. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net 'sha256-vvt4KWwuNr51XfE5m+hzeNEGhiOfZzG97ccfqGsPwvE='; style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://drive.google.com https://*.googleusercontent.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://unpkg.com; worker-src 'self' blob:" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#6E2632" />
+<meta name="color-scheme" content="light dark" />
+<meta name="description" content="Presensi Ignasian — aplikasi presensi digital berbasis QR dengan semangat Ignatian. Basis data daring menjadi acuan (cloud-first), dengan cadangan aman di perangkat Anda yang tersinkron otomatis saat terhubung ke internet." />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Ignasian" />
+<title>Presensi Ignasian</title>
+
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2214%22 fill=%22%23722F37%22/><circle cx=%2232%22 cy=%2232%22 r=%2221%22 fill=%22none%22 stroke=%22%23C9A961%22 stroke-width=%223%22/><path d=%22M32 18v28M22 28h20%22 fill=%22none%22 stroke=%22%23C9A961%22 stroke-width=%224%22 stroke-linecap=%22round%22/></svg>" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="css/variables.css" />
+<link rel="stylesheet" href="css/base.css" />
+<link rel="stylesheet" href="css/layout.css" />
+<link rel="stylesheet" href="css/components.css" />
+<link rel="stylesheet" href="css/pages.css" />
+<link rel="stylesheet" href="css/utilities.css" />
+<style>
+/* Pengaman inline (tidak tergantung cache CSS/service worker):
+   #bootVeil memakai style="display:flex" inline, jadi HANYA bisa dikalahkan
+   oleh !important. Bila utilities.css lama masih di-cache, aturan ini tetap
+   menyembunyikan selubung setelah data-boot dilepas. */
+html:not([data-boot]) #bootVeil{display:none !important}
+</style>
+
+<script src="js/boot.js?v=33"></script>
+</head>
+<body>
+
+<!-- Selubung awal: menutup layar sampai aplikasi selesai memeriksa sesi,
+     sehingga pengguna tidak melihat kedipan "dialihkan ke halaman login".
+     CATATAN: JANGAN taruh display:flex inline di sini — inline style
+     mengalahkan CSS (html:not([data-boot]) .boot-veil{display:none}) sehingga
+     selubung macet bila CSS lama masih di-cache. Flex sudah diatur di
+     css/utilities.css (.boot-veil). -->
+<div id="bootVeil" class="boot-veil" aria-hidden="true"
+     style="position:fixed;inset:0;z-index:1200;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--head-bg,#6E2632)">
+  <div class="login-crest">IHS</div>
+  <p class="login-foot">Ad Maiorem Dei Gloriam</p>
+</div>
+
+<noscript>
+  <p class="center mt-20" style="padding:24px;font-family:Georgia,serif">
+    Aplikasi Presensi Ignasian memerlukan JavaScript agar dapat berjalan dengan baik.
+  </p>
+</noscript>
+
+<!-- ================= LAYAR MASUK ================= -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="login-crest">IHS</div>
+    <h1 class="login-title">Presensi Ignasian</h1>
+    <p class="login-sub">Ad Maiorem Dei Gloriam</p>
+
+    <div class="form-group">
+      <label for="loginUser">Username</label>
+      <input type="text" id="loginUser" class="form-control" placeholder="masukkan Username"
+             autocomplete="username" autocapitalize="none" spellcheck="false" />
+    </div>
+    <div class="form-group">
+      <label for="loginPass">Password</label>
+      <div class="pw-wrap">
+        <input type="password" id="loginPass" class="form-control" placeholder="masukkan Password"
+               autocomplete="current-password" />
+        <button class="pw-eye" type="button" aria-pressed="false" aria-label="Tampilkan password"
+                title="Tampilkan password" data-act="toggleLihatPassword" data-ev="click" data-a1="@self">
+          <span class="ic" data-ic="eye"></span>
+        </button>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="btnLogin" type="button" data-act="doLogin" data-ev="click">
+      <span class="ic" data-ic="keycross"></span>Masuk
+    </button>
+
+    <button class="btn btn-outline mt-10" id="btnForgot" type="button" data-act="showForgotPassword" data-ev="click">
+      <span class="ic" data-ic="keyring"></span>Lupa Password?
+    </button>
+
+    <div class="divider"></div>
+    <div class="login-hint">
+      Hubungi Administrator atau Pengurus.<br>
+      Tekan <strong>Daftar</strong>
+      di bawah, lalu isi nama, username, dan password anda.<br><br>
+      Lupa password? Ketuk <strong>Lupa Password?</strong>
+    </div>
+    <button class="btn btn-outline mt-10" id="btnDaftar" type="button" data-act="bukaDaftar" data-ev="click">
+      <span class="ic" data-ic="quill"></span>Daftar
+    </button>
+  </div>
+  <p class="login-foot">Ite, Inflammate Omnia</p>
+  <!-- Nomor versi diisi otomatis dari CONFIG.VERSION (lihat terapkanVersi()). -->
+  <p class="login-foot" data-versi-app>Versi 4.9.3</p>
+</div>
+
+<!-- ================= LAYAR PENDAFTARAN (PUBLIK, BELUM LOGIN) =============
+     Pendaftaran memakai nomor HP/WA sebagai identitas. Nomor harus SUDAH
+     dicatat lebih dahulu oleh Administrator (menu "Input Nomor & Peran");
+     bila belum terdaftar, pendaftaran ditolak. Nomor yang dipakai untuk
+     mendaftar hanya bisa SEKALI — setelah berhasil, akun langsung aktif
+     dan nomor tersebut tidak dapat didaftarkan lagi.
+     ==================================================================== -->
+<div id="daftarScreen" class="login-screen hidden">
+  <div class="login-card">
+    <div class="login-crest">IHS</div>
+    <h1 class="login-title">Pendaftaran Member</h1>
+    <p class="login-sub">Presensi Ignasian · Ad Maiorem Dei Gloriam</p>
+
+    <!-- Langkah 1 — periksa nomor HP/WA -->
+    <div id="daftarStep1">
+      <p class="tiny muted center mb-14">
+        Masukkan nomor HP/WhatsApp yang sudah dicatat oleh Administrator.
+        Nomor inilah yang menjadi penanda akun Anda.
+      </p>
+      <div class="form-group">
+        <label for="daftarHp">Nomor HP / WhatsApp</label>
+        <input type="tel" id="daftarHp" class="form-control" placeholder="08xxxxxxxxxx atau 628xxxxxxxxxx"
+               autocomplete="tel" inputmode="tel" />
+      </div>
+      <button class="btn btn-primary" id="btnDaftarPeriksa" type="button" data-act="cekNomorDaftar" data-ev="click">
+        <span class="ic" data-ic="compass"></span>Periksa Nomor
+      </button>
+      <p class="tiny muted mt-10 center">
+        <button class="linklike" type="button" data-act="tutupDaftar" data-ev="click">Kembali ke layar masuk</button>
+      </p>
+    </div>
+
+    <!-- Langkah 2 — lengkapi akun (diisi oleh js/app.js) -->
+    <div id="daftarStep2" class="hidden"></div>
+
+    <!-- Hasil / pesan -->
+    <div id="daftarInfo"></div>
+  </div>
+  <p class="login-foot">Ite, Inflammate Omnia</p>
+</div>
+
+<!-- ================= APLIKASI UTAMA ================= -->
+<div id="mainApp" class="hidden">
+
+  <header class="app-header">
+    <div class="brand">
+      <div class="crest" aria-hidden="true">IHS</div>
+      <div>
+        <h1>Presensi Ignasian</h1>
+        <div class="motto">Ad Maiorem Dei Gloriam</div>
+      </div>
+      <div class="user-chip" id="userChip"></div>
+    </div>
+  </header>
+
+  <!-- Sinkronisasi berjalan sepenuhnya di LATAR BELAKANG (tanpa bilah tampilan)
+       agar tata letak halaman tidak berubah tinggi. Status tetap dapat dilihat
+       di menu Pengaturan. -->
+
+  <div class="container">
+
+    <!-- ============ BERANDA ============ -->
+    <section id="page-home" class="page">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="rosette"></span>Ringkasan</div>
+        <div class="stats-grid cols-4" id="homeStats"></div>
+        <p class="tiny muted mt-10" id="homeScope"></p>
+      </div>
+
+      <div class="card" id="homeActivityCard" data-admin-note="">
+        <div class="card-title"><span class="ic" data-ic="ledger"></span>Aktivitas Terbaru</div>
+        <p class="card-sub">Catatan sistem (hanya dapat dilihat oleh Administrator).</p>
+        <div id="homeActivity"></div>
+      </div>
+
+      <div id="adminHomeExtra"></div>
+    </section>
+
+    <!-- ============ PRESENSI ============ -->
+    <section id="page-presensi" class="page hidden">
+      <!-- Pintasan dari Beranda ("Sesi Hari Ini") mendarat di sini: acara yang
+           dipilih tampil sebagai penanda agar kode QR yang dipindai benar-benar
+           milik acara yang sedang berlangsung. -->
+      <div class="card" id="presensiSesiCard">
+        <div class="card-title"><span class="ic" data-ic="horarium"></span>Pilih Event</div>
+        <p class="card-sub" id="presensiSesiNote">
+          Pilih acara yang sedang berlangsung.
+        </p>
+        <div id="presensiSesiList"></div>
+      </div>
+
+      <div id="presensi-scan">
+        <div class="card">
+          <div class="card-title"><span class="ic" data-ic="matrix"></span>Scan Kode QR Event</div>
+          <p class="card-sub">
+            Arahkan kamera ke kode QR yang telah disediakan oleh panitia.
+            Pemindaian hanya dapat dilakukan setelah <strong>OPEN-GATE</strong> acara
+            dibuka oleh Administrator.
+          </p>
+          <p id="scanGateNote" class="tiny muted mt-6 hidden"></p>
+          <div id="scannerContainer" class="scan-frame hidden">
+            <div id="qr-reader"></div>
+            <p id="scanHint" class="small muted center mt-8">Menyiapkan kamera…</p>
+          </div>
+          <button class="btn btn-primary" id="btnStartScan" type="button" data-act="startScanner" data-ev="click">
+            <span class="ic" data-ic="viewfinder"></span>Buka Kamera &amp; Scan
+          </button>
+          <button class="btn btn-danger hidden" id="btnStopScan" type="button" data-act="stopScanner" data-ev="click">
+            <span class="ic" data-ic="scrap"></span>Batalkan
+          </button>
+          <div class="divider"></div>
+          <p class="small muted center">Kamera bermasalah, atau kode QR tersimpan sebagai foto/screenshot?</p>
+          <label class="btn btn-outline" for="qrGalleryInput" style="width:100%;justify-content:center">
+            <span class="ic" data-ic="codex"></span>Buka Galeri &amp; Pilih Foto QR
+          </label>
+          <input type="file" id="qrGalleryInput" accept="image/*" class="hidden" data-act="scanFromFile" data-ev="change" data-a1="@self" />
+          <label class="btn btn-ghost mt-10" for="qrFileInput" style="width:100%;justify-content:center">
+            <span class="ic" data-ic="viewfinder"></span>Ambil Foto QR dengan Kamera
+          </label>
+          <input type="file" id="qrFileInput" accept="image/*" capture="environment" class="hidden" data-act="scanFromFile" data-ev="change" data-a1="@self" />
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ RIWAYAT ============ -->
+    <section id="page-riwayat" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="codex"></span><span id="riwayatTitle">Riwayat Presensi</span></div>
+        <p class="card-sub" id="riwayatScope"></p>
+        <p class="tiny muted mb-8" data-role="admin">
+          Catatan Administrator: tombol <strong>Hapus</strong> pada setiap baris memungkinkan Anda
+          menghapus catatan presensi yang keliru. Penghapusan berlaku di perangkat ini maupun di
+          server (sinkron otomatis).
+        </p>
+
+        <!-- Saring per acara: riwayat HANYA menampilkan data sesuai acara yang
+             dipilih. Belum ada acara dipilih → tampil arahan untuk memilih. -->
+        <div class="form-group">
+          <label for="riwayatAcara">Tampilkan data acara</label>
+          <select id="riwayatAcara" class="form-control" data-act="renderRiwayat" data-ev="change"></select>
+          <p class="tiny muted mt-6">Riwayat hanya menampilkan presensi dari acara yang dipilih di atas.</p>
+        </div>
+
+        <div id="riwayatBody"></div>
+      </div>
+    </section>
+
+    <!-- ============ LAPORAN ============ -->
+    <section id="page-laporan" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="bulla"></span>Laporan Presensi</div>
+        <p class="card-sub" id="laporanScope">Rekap Kehadiran.</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="laporanFrom">Dari tanggal</label>
+            <input type="date" id="laporanFrom" class="form-control" />
+          </div>
+          <div class="form-group">
+            <label for="laporanTo">Sampai tanggal</label>
+            <input type="date" id="laporanTo" class="form-control" />
+          </div>
+        </div>
+        <!-- REKAP KEHADIRAN per rentang tanggal (semua peran) -->
+        <button class="btn btn-outline" type="button" data-act="generateLaporan" data-ev="click">
+          <span class="ic" data-ic="bulla"></span>Tampilkan Data
+        </button>
+        <div class="table-wrap">
+          <table class="responsive">
+            <thead><tr><th>Nama</th><th>Hadir</th><th>%</th></tr></thead>
+            <tbody id="laporanBody"></tbody>
+          </table>
+        </div>
+
+        <div class="divider" data-role="staff"></div>
+        <p class="tiny muted" data-role="staff">
+          Rekapitulasi di atas memakai rentang tanggal. Untuk melihat, mengunduh, atau mencetak
+          daftar hadir sebuah acara, gunakan bagian <strong>Daftar Hadir per Acara</strong> di bawah.
+        </p>
+      </div>
+
+      <!-- DAFTAR HADIR PER ACARA: kartu TERPISAH agar tombol unduh/cetak tidak
+           pernah menutupi tabel, dan urutannya jelas —
+           pilih acara → pilih tindakan → lihat daftar hadir. -->
+      <div class="card" data-role="staff">
+        <div class="card-title"><span class="ic" data-ic="seal"></span>Daftar Hadir per Acara</div>
+        <p class="card-sub">Pilih acara untuk melihat, mengunduh, atau mencetak daftar hadir.</p>
+
+          <div class="form-group">
+          <label for="laporanAcara">Pilih Acara</label>
+          <select id="laporanAcara" class="form-control" data-act="renderLaporanAcara" data-ev="change"></select>
+        </div>
+
+        <div class="btn-row mb-14">
+          <button class="btn btn-gold btn-sm" type="button" data-act="exportLaporanCSV" data-ev="click" data-a1="acara">
+            <span class="ic" data-ic="descend"></span>Unduh CSV / Excel
+          </button>
+          <button class="btn btn-outline btn-sm" type="button" data-act="printLaporanAcara" data-ev="click">
+            <span class="ic" data-ic="seal"></span>Cetak PDF
+          </button>
+          <button class="btn btn-outline btn-sm" type="button" data-act="exportLaporanCSV" data-ev="click" data-a1="rekap">
+            <span class="ic" data-ic="descend"></span>Unduh Rekap CSV
+          </button>
+        </div>
+
+        <p class="card-sub" id="laporanAcaraInfo">Silakan pilih acara untuk melihat daftar hadir.</p>
+        <p class="tiny muted mb-8" data-role="admin">
+          Catatan Admin: status kini hanya <strong>Hadir</strong>; Anda dapat menambahkan keterangan
+          atau menghapus data presensi di sini. Bila <strong>nama pemateri</strong> belum tercantum,
+          isi lewat tombol <strong>Ubah</strong> pada <em>Kelola Jadwal</em> — nama pemateri
+          sudah ikut tercetak otomatis pada PDF. Tata letak cetakan diatur pada
+          <button class="linklike" type="button" data-act="showPage" data-ev="click" data-a1="pdf">Atur Layout PDF</button>.
+        </p>
+        <div class="table-wrap scroll-y">
+          <table class="responsive">
+            <thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Waktu</th><th>Metode</th><th>Jarak</th><th>Ket.</th><th data-role="admin">Kelola</th></tr></thead>
+            <tbody id="laporanAcaraBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MENU LAINNYA ============ -->
+    <section id="page-lainnya" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="halobust"></span>Akun Saya</div>
+        <p class="small" id="lainnyaWho">—</p>
+        <p class="tiny muted mt-6" id="lainnyaRoleNote"></p>
+      </div>
+
+      <!-- UKURAN TULISAN: tanpa data-role → terlihat untuk SEMUA peran -->
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="letters"></span>Ukuran Tulisan</div>
+        <p class="card-sub">Atur besar-kecil teks seluruh aplikasi agar nyaman dibaca.</p>
+        <div class="grid-2" id="fontSizeChoices">
+          <button class="btn btn-outline fs-choice" type="button" data-fs="kecil" aria-pressed="false" data-act="setFontSize" data-ev="click" data-a1="kecil">Kecil</button>
+          <button class="btn btn-outline fs-choice" type="button" data-fs="normal" aria-pressed="false" data-act="setFontSize" data-ev="click" data-a1="normal">Normal</button>
+          <button class="btn btn-outline fs-choice" type="button" data-fs="besar" aria-pressed="false" data-act="setFontSize" data-ev="click" data-a1="besar">Besar</button>
+          <button class="btn btn-outline fs-choice" type="button" data-fs="sangat-besar" aria-pressed="false" data-act="setFontSize" data-ev="click" data-a1="sangat-besar">Sangat Besar</button>
+        </div>
+        <p class="tiny muted mt-10">Ukuran saat ini: <strong id="fontSizeState">Normal</strong></p>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="rosette"></span>Menu Utama</div>
+        <div class="grid-2">
+          <button class="btn btn-outline" type="button" data-act="showPage" data-ev="click" data-a1="profil">
+            <span class="ic" data-ic="halobust"></span>Profil
+          </button>
+          <button class="btn btn-outline" type="button" data-act="showPage" data-ev="click" data-a1="pengaturan">
+            <span class="ic" data-ic="dial"></span>Pengaturan
+          </button>
+
+          <!-- MATERI & DOKUMENTASI: semua peran dapat melihat & mengunduh -->
+          <button class="btn btn-outline" type="button" data-act="showPage" data-ev="click" data-a1="materi">
+            <span class="ic" data-ic="dossier"></span>Materi
+          </button>
+          <button class="btn btn-outline" type="button" data-act="showPage" data-ev="click" data-a1="dokumentasi">
+            <span class="ic" data-ic="photo"></span>Dokumentasi
+          </button>
+
+          <!-- JADWAL & BUAT QR: hanya ADMIN dan PENGURUS -->
+          <button class="btn btn-outline" type="button" data-role="staff" data-act="showPage" data-ev="click" data-a1="jadwal">
+            <span class="ic" data-ic="horarium"></span>Kelola Jadwal
+          </button>
+          <button class="btn btn-outline" type="button" data-role="staff" data-act="showPage" data-ev="click" data-a1="qr-gen">
+            <span class="ic" data-ic="matrix"></span>Buat Kode QR
+          </button>
+          <button class="btn btn-outline" type="button" data-role="admin" data-act="showPage" data-ev="click" data-a1="log">
+            <span class="ic" data-ic="ledger"></span>Log Sistem
+          </button>
+          <button class="btn btn-outline" type="button" data-role="admin" data-act="showPage" data-ev="click" data-a1="users">
+            <span class="ic" data-ic="halopair"></span>Data Peserta
+          </button>
+          <button class="btn btn-outline" type="button" data-role="admin" data-act="showPage" data-ev="click" data-a1="member">
+            <span class="ic" data-ic="halopair"></span>Input Nomor &amp; Peran
+          </button>
+          <button class="btn btn-outline" type="button" data-role="admin" data-act="showPage" data-ev="click" data-a1="registrasi">
+            <span class="ic" data-ic="quill"></span>Registrasi Pengguna
+          </button>
+          <button class="btn btn-outline" type="button" data-role="admin" data-act="showPage" data-ev="click" data-a1="pdf">
+            <span class="ic" data-ic="dossier"></span>Atur Layout PDF
+          </button>
+
+          <button class="btn btn-outline" type="button" data-act="showPage" data-ev="click" data-a1="bantuan">
+            <span class="ic" data-ic="candle"></span>Panduan
+          </button>
+          <button class="btn btn-danger" type="button" data-act="doLogout" data-ev="click">
+            <span class="ic" data-ic="gate"></span>Keluar
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MATERI (SEMUA PERAN — berkas Google Drive) ============ -->
+    <section id="page-materi" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="dossier"></span>Materi Kegiatan</div>
+        <p class="card-sub">Unduh materi sesuai acara &amp; tanggal. Berkas disimpan di Google Drive dan dibagikan oleh Administrator / Pengurus.</p>
+        <div class="form-group">
+          <label for="materiAcara">Saring per acara</label>
+          <select id="materiAcara" class="form-control" data-act="renderMateri" data-ev="change"></select>
+        </div>
+        <!-- Tombol unggah: hanya ADMIN & PENGURUS (data-role="staff") -->
+        <div class="btn-row" data-role="staff">
+          <button class="btn btn-gold" type="button" data-act="openAddMateri" data-ev="click">
+            <span class="ic" data-ic="quill"></span>Tambah Materi
+          </button>
+        </div>
+        <div class="divider"></div>
+        <div id="materiList"></div>
+      </div>
+    </section>
+
+    <!-- ============ DOKUMENTASI (SEMUA PERAN — foto Google Drive) ========== -->
+    <section id="page-dokumentasi" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="photo"></span>Dokumentasi Kegiatan</div>
+        <p class="card-sub">Lihat &amp; unduh foto selama kegiatan, dikelompokkan per acara dan tanggal.</p>
+        <div class="form-group">
+          <label for="dokAcara">Saring per acara</label>
+          <select id="dokAcara" class="form-control" data-act="renderDokumentasi" data-ev="change"></select>
+        </div>
+        <!-- Tombol unggah: hanya ADMIN & PENGURUS (data-role="staff") -->
+        <div class="btn-row" data-role="staff">
+          <button class="btn btn-gold" type="button" data-act="openAddDokumentasi" data-ev="click">
+            <span class="ic" data-ic="quill"></span>Tambah Foto
+          </button>
+        </div>
+        <div class="divider"></div>
+        <div id="dokList"></div>
+      </div>
+    </section>
+
+    <!-- ============ PROFIL ============ -->
+    <section id="page-profil" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="halobust"></span>Profil Saya</div>
+        <div class="row mb-14">
+          <span class="badge badge-role" id="profilPeran">—</span>
+          <span class="tiny muted" id="profilUsername">—</span>
+          <span class="tiny muted spacer" id="profilSejak">—</span>
+        </div>
+        <div class="form-group">
+          <label for="profilNama">Nama Lengkap</label>
+          <input type="text" id="profilNama" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="profilEmail">Alamat Surel (Email)</label>
+          <input type="email" id="profilEmail" class="form-control" placeholder="nama@contoh.id" />
+        </div>
+        <div class="form-group">
+          <label for="profilHP">Nomor Telepon / HP</label>
+          <input type="tel" id="profilHP" class="form-control" disabled />
+        </div>
+        <button class="btn btn-primary" type="button" data-act="saveProfil" data-ev="click">
+          <span class="ic" data-ic="seal"></span>Simpan Perubahan Profil
+        </button>
+      </div>
+    </section>
+
+    <!-- ============ PENGATURAN ============ -->
+    <section id="page-pengaturan" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="moonstar"></span>Tampilan</div>
+        <div class="setting">
+          <span class="ic" data-ic="dial"></span>
+          <div class="body">
+            <div class="name">Mode Gelap</div>
+            <div class="desc">Tema saat ini: <strong id="themeState">Terang</strong></div>
+            <div class="desc" id="themeSystem">Mengikuti pengaturan sistem perangkat Anda.</div>
+          </div>
+          <button type="button" class="switch" id="themeSwitch" aria-pressed="false" data-act="toggleTheme" data-ev="click">
+            <span class="knob"><span class="ic" data-ic="sunray"></span></span>
+          </button>
+        </div>
+        <p class="tiny muted mt-10">
+          Pilihan tema ini tersimpan di perangkat Anda dan diterapkan sejak awal, sehingga tetap nyaman digunakan di ruang ibadat yang bercahaya redup.
+        </p>
+      </div>
+
+      <!-- Pemberitahuan bagi Pengurus & Peserta: panel Sinkronisasi dan
+           Penyimpanan Luring dikunci untuk Administrator. -->
+      <div class="card hidden" id="cardAdminOnlyNote" data-non-admin-note="">
+        <div class="card-title"><span class="ic" data-ic="cross"></span>Khusus Administrator</div>
+        <p class="tiny muted">
+          Panel <strong>Sinkronisasi</strong> dan <strong>Penyimpanan Luring</strong> khusus untuk Administrator. Tenang, data Anda tetap tersimpan aman di perangkat ini dan akan dikirim secara otomatis ke server saat perangkat kembali terhubung ke internet.
+        </p>
+      </div>
+
+      <!-- SINKRONISASI: hanya ADMIN (dikunci lewat data-admin-note + pemeriksaan
+           isAdmin() pada js/app.js). -->
+      <div class="card" id="cardSinkronisasi" data-admin-note="">
+        <div class="card-title"><span class="ic" data-ic="sync"></span>Sinkronisasi</div>
+        <p class="card-sub">Panel ini khusus untuk Administrator.</p>
+
+        <div class="setting">
+          <span class="ic" data-ic="compass"></span>
+          <div class="body">
+            <div class="name">Sambungan</div>
+            <div class="desc" id="setNet">Memeriksa…</div>
+          </div>
+        </div>
+
+        <div class="setting">
+          <span class="ic" data-ic="rosette"></span>
+          <div class="body">
+            <div class="name">Basis Data</div>
+            <div class="desc" id="setDb">Memeriksa…</div>
+          </div>
+        </div>
+
+        <div class="setting">
+          <span class="ic" data-ic="sync"></span>
+          <div class="body">
+            <div class="name">Server Sinkronisasi</div>
+            <div class="desc" id="setApi">Memeriksa…</div>
+          </div>
+        </div>
+
+        <div class="setting">
+          <span class="ic" data-ic="ledger"></span>
+          <div class="body">
+            <div class="name">Antrean Perubahan</div>
+            <div class="desc" id="setQueue">—</div>
+          </div>
+        </div>
+
+        <div class="setting">
+          <span class="ic" data-ic="horarium"></span>
+          <div class="body">
+            <div class="name">Status Sinkron (Tarik · Kirim · Realtime)</div>
+            <div class="desc" id="setLastSync">—</div>
+          </div>
+        </div>
+
+        <!-- CLOUD-FIRST: tidak ada tombol sinkron manual. Penarikan (tarik) dan
+             pengiriman (kirim) berjalan otomatis: saat aplikasi dibuka, tiap 60
+             detik saat daring, dan setiap kali perangkat kembali online.
+             Tombol "Uji Koneksi Database" di bawah hanya untuk pemeriksaan. -->
+        <p class="tiny muted mt-14" id="syncAutoNote">
+          <strong>Mode cloud-first:</strong> setiap kali aplikasi dibuka atau disinkronkan, data terbaru dari basis data <strong>ditarik lebih dahulu sebagai acuan</strong>; perubahan Anda dikirim di atasnya lalu menyebar ke semua perangkat lewat saluran realtime (cadangan: penarikan berkala tiap 60 detik). Jadi <strong>tidak perlu menekan tombol apa pun</strong> — saat luring, perangkat memakai cadangan lokal dan mengirim ulang otomatis begitu daring.
+        </p>
+        <div class="btn-row mt-10">
+          <button class="btn btn-gold btn-sm" type="button" data-act="testSupabase" data-ev="click">
+            <span class="ic" data-ic="compass"></span>Uji Koneksi Database
+          </button>
+        </div>
+        <p class="tiny muted mt-10">
+          Basis data: Supabase. Jika tombol uji menunjukkan bahwa tabel belum tersedia, silakan jalankan berkas <strong>supabase/schema.sql</strong> melalui SQL Editor di dashboard Supabase Anda.
+        </p>
+      </div>
+
+      <!-- PENYIMPANAN LURING: hanya ADMIN (dikunci lewat data-admin-note). -->
+      <div class="card" id="cardLuring" data-admin-note="">
+        <div class="card-title"><span class="ic" data-ic="codex"></span>Penyimpanan Luring</div>
+        <p class="card-sub">Panel ini khusus untuk Administrator.</p>
+        <div class="setting">
+          <span class="ic" data-ic="descend"></span>
+          <div class="body">
+            <div class="name">Data di Perangkat Ini</div>
+            <div class="desc" id="setData">—</div>
+          </div>
+        </div>
+        <p class="tiny muted">
+          Setiap data presensi, jadwal, dan pendaftaran akan disimpan lebih dahulu di perangkat ini, lalu dikirim ke server secara berurutan ketika kembali daring — tanpa menghapus data lokal yang belum terkirim.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="cross"></span>Tentang Aplikasi</div>
+        <div class="setting">
+          <span class="ic" data-ic="cross"></span>
+          <div class="body">
+            <div class="name">Presensi Ignasian</div>
+            <div class="desc" id="tentangVersi">Versi 4.9.3 · Ignatian Edition · © 2026</div>
+          </div>
+        </div>
+        <p class="tiny muted center">Ad Maiorem Dei Gloriam</p>
+      </div>
+    </section>
+
+    <!-- ============ BANTUAN ============ -->
+    <section id="page-bantuan" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="candle"></span>Panduan Pemakaian</div>
+        <p class="lead">
+          <strong>Presensi Ignasian</strong> memudahkan pencatatan kehadiran melalui kode QR di lokasi, dengan semangat Ignasian: rajin, jujur, dan tertib.
+        </p>
+        <div class="divider"></div>
+        <h3>Peran Anda Saat Ini: <span id="bantuanPeran">—</span></h3>
+        <p class="tiny muted mt-6" id="bantuanLuring">—</p>
+        <p class="tiny muted mt-6">Versi aplikasi: <span id="bantuanVersi">—</span></p>
+        <div class="divider"></div>
+
+        <h3>Cara Melakukan Presensi dengan QR</h3>
+        <ol class="steps">
+          <li>Buka menu <strong>Presensi</strong>. Bila hari ini ada acara, Anda dapat langsung
+            mengetuk acara tersebut pada <strong>Beranda → Sesi Hari Ini</strong>.</li>
+          <li>Pop-up detail acara muncul. Tekan <strong>Hadir</strong> bila Anda ikut acara itu
+            (atau <strong>Batal</strong> untuk membatalkannya). Aplikasi akan langsung
+            membawa Anda ke halaman presensi dengan acara tersebut terpilih.</li>
+          <li>Izinkan akses kamera dan layanan lokasi pada perangkat Anda.</li>
+          <li>Arahkan dan pindai kode QR yang tersedia di lokasi acara.</li>
+          <li>Kode QR yang sudah tersimpan sebagai foto/screenshot juga dapat dipindai melalui
+            tombol <strong>Buka Galeri &amp; Pilih Foto QR</strong>.</li>
+          <li>Sistem akan otomatis memeriksa acara, sesi aktif, radius lokasi, dan memastikan tidak ada duplikasi data kehadiran.</li>
+        </ol>
+
+        <div class="divider"></div>
+        <h3>Nyaman Membaca (Ukuran Tulisan)</h3>
+        <ul class="steps">
+          <li>Buka menu <strong>Lainnya → Ukuran Tulisan</strong>, lalu pilih
+            <strong>Kecil</strong>, <strong>Normal</strong>, <strong>Besar</strong>, atau
+            <strong>Sangat Besar</strong> sesuai kenyamanan Anda — tangga ukurannya
+            <strong>1,05×</strong> (Kecil) sampai <strong>1,45×</strong> (Sangat Besar)
+            teks bawaan, sehingga pilihan terkecil pun tetap mudah terbaca.</li>
+          <li>Pilihan berlaku untuk seluruh menu, tersimpan di perangkat ini,
+            dan tersedia untuk semua peran (Peserta, Pengurus, Administrator).</li>
+        </ul>
+
+        <div class="divider"></div>
+        <h3>Materi &amp; Dokumentasi</h3>
+        <ul class="steps">
+          <li>Buka <strong>Lainnya → Materi</strong> untuk mengunduh berkas kegiatan;
+            gunakan filter <strong>acara</strong> agar langsung menemukan materi sesuai tanggal.</li>
+          <li>Buka <strong>Lainnya → Dokumentasi</strong> untuk melihat galeri foto kegiatan —
+            ketuk foto untuk membuka aslinya, atau tekan <strong>Unduh</strong>.</li>
+          <li>Berkas disimpan di Google Drive; tautan dibagikan oleh Administrator / Pengurus
+            sehingga semua anggota dapat mengunduh tanpa perlu akun Google khusus.</li>
+        </ul>
+
+        <div class="divider"></div>
+        <h3>Bekerja Tanpa Koneksi Internet (Luring)</h3>
+        <ul class="steps">
+          <li>Semua data kehadiran akan disimpan dengan aman terlebih dahulu di perangkat Anda.</li>
+          <li>Saat perangkat kembali terhubung ke internet, data akan otomatis terkirim ke server di latar belakang.</li>
+          <li>Data dari server akan digabungkan dengan cerdas, tanpa menimpa data lokal Anda yang belum terkirim.</li>
+          <li>Untuk masuk pertama kali, pastikan perangkat Anda terhubung ke internet agar data akun terbaru dapat diambil.</li>
+          <li><strong>Kolom password</strong> — tekan tombol <strong>mata</strong> di sebelah kanan kolom password untuk melihat teks yang sedang Anda ketik; tekan sekali lagi untuk menyembunyikannya. Tersedia pada layar Masuk, pendaftaran, dan Registrasi.</li>
+          <li><strong>Tips:</strong> Tambahkan aplikasi ini ke layar utama (home screen) perangkat Anda agar lebih mudah diakses kapan saja, bahkan tanpa koneksi.</li>
+        </ul>
+
+        <!-- Panduan ditampilkan hanya sesuai peran pengguna (lihat applyRoleVisibility). -->
+        <div data-role="peserta">
+          <div class="divider"></div>
+          <h3>Khusus Peserta</h3>
+          <ul class="steps">
+            <li><strong>Daftar</strong> (layar masuk) — memakai <strong>nomor HP/WhatsApp</strong> yang sudah dicatat lebih dahulu oleh Administrator. Nomor dan peran tampil <strong>terkunci</strong> dari daftar; Anda cukup mengisi <strong>nama, username, dan password</strong> pilihan sendiri. Satu nomor hanya dapat mendaftar <strong>satu kali</strong>; setelah berhasil, masuklah dengan username &amp; password Anda. Nomor yang belum tercatat akan ditolak — hubungi Admin/Pengurus lebih dahulu.</li>
+            <li><strong>Sesi Hari Ini</strong> — ketuk nama acara pada Beranda, lalu tekan <strong>Hadir</strong> pada pop-up detail untuk langsung masuk ke halaman presensi acara tersebut.</li>
+            <li><strong>Riwayat</strong> — pilih dahulu acara pada <em>Tampilkan data acara</em>, lalu riwayat Anda untuk acara itu akan tampil sebagai baris ringkas.</li>
+            <li><strong>Lupa password</strong> — ketuk <strong>Lupa Password?</strong> pada layar masuk, masukkan nomor HP/WA yang terdaftar, lalu tunggu Administrator menghubungi Anda melalui WhatsApp.</li>
+          </ul>
+        </div>
+
+        <div data-role="staff">
+          <div class="divider"></div>
+          <h3>Khusus Administrator &amp; Pengurus</h3>
+          <ul class="steps">
+            <li><strong>Sesi Hari Ini</strong> — ketuk acara, lalu tekan <strong>Hadir</strong> pada pop-up detail untuk langsung ke presensi acara tersebut. Pengurus &amp; Administrator juga mendapat tombol <strong>QR</strong> untuk membuat kode QR acara itu.</li>
+            <li><strong>Tambah Materi / Tambah Foto</strong> — unggah berkas &amp; foto kegiatan ke folder Google Drive bersama, salin tautannya, lalu tempelkan pada menu <strong>Materi</strong> / <strong>Dokumentasi</strong> disertai acaranya. Pastikan berkas dibagikan dengan hak &ldquo;Siapa saja yang punya link dapat melihat&rdquo;.</li>
+            <li><strong>Kelola Jadwal</strong> — menambahkan acara, memilih tanggal &amp; jam
+              (tekan <strong>OK</strong> untuk menegaskan pilihan atau <strong>Batal</strong> untuk
+              membatalkannya), mengisi nama <strong>pemateri/pengisi materi</strong>
+              (centang <strong>Pemateri ke-2</strong> bila acara diisi lebih dari satu pemateri),
+              menentukan lokasi, durasi, dan radius validasi. Tombol <strong>Ubah</strong> pada
+              daftar jadwal dipakai untuk melengkapi atau mengoreksi nama acara, lokasi, dan
+              pemateri pada acara yang sudah ada. Nama pemateri juga tampil pada
+              daftar jadwal serta laporan yang diunduh (CSV/Excel) dan dicetak.</li>
+            <li><strong>OPEN-GATE</strong> (khusus Administrator) — menentukan <em>jam</em> peserta
+              mulai boleh memindai QR pada sebuah acara. Tekan <strong>OPEN-GATE</strong> pada kartu
+              jadwal (atau isi kolomnya di jendela <strong>Ubah</strong>), lalu tentukan waktunya,
+              gunakan <strong>Buka sekarang</strong>, atau <strong>Tutup Gate</strong> untuk menutupnya
+              kembali. Selama gate belum diatur atau belum waktunya, tombol kamera, galeri, dan
+              foto QR peserta akan ditolak (statusnya tampil pada kartu jadwal dan halaman
+              Presensi).</li>
+            <li><strong>Buat Kode QR</strong> — menghasilkan kode QR yang siap dicetak dan ditempel di lokasi acara. Satu acara memiliki kode QR-nya sendiri.</li>
+          </ul>
+        </div>
+
+        <div data-role="admin">
+          <h3>Khusus Administrator</h3>
+          <ul class="steps">
+            <li><strong>Log Sistem</strong> — melihat, menghapus satu per satu, atau membersihkan catatan aktivitas aplikasi.</li>
+            <li><strong>Daftar Hadir per Acara</strong> — menambahkan keterangan, menghapus, dan mencetak data presensi; penghapusan presensi juga tersedia pada menu <strong>Riwayat</strong>. <strong>Nama pemateri</strong> ikut tercetak otomatis pada PDF; bila belum tercantum, lengkapi lewat tombol <strong>Ubah</strong> pada <em>Kelola Jadwal</em>.</li>
+            <li><strong>Atur Layout PDF</strong> — menentukan tampilan Daftar Hadir yang dicetak: kop, isi, kolom tabel, ukuran kertas, orientasi, margin, dan blok tanda tangan. Dilayani lengkap dengan pratinjau, dan berlaku untuk semua perangkat.</li>
+            <li><strong>Input Nomor &amp; Peran</strong> — mencatat nomor HP/WhatsApp beserta peran untuk <strong>banyak orang sekaligus</strong> (tempel daftar satu baris satu orang: <code>nomor, nama, peran</code>). Nomor yang dicatat inilah yang boleh mendaftar sendiri lewat layar <strong>Daftar</strong>; kolom <em>username</em>-nya masih sementara dan diganti peserta saat mendaftar. Menu ini juga dipakai memperbarui peran atau melepas nomor yang tidak dipakai lagi.</li>
+            <li><strong>Data Peserta</strong> — melihat daftar akun beserta passwordnya, mengatur ulang password, dan menangani permintaan lupa password dengan menghubungi pemilik akun melalui WhatsApp.</li>
+            <li><strong>Sinkronisasi &amp; Penyimpanan Luring</strong> — memantau status koneksi dan antrean data melalui menu Pengaturan. Sinkronisasi berjalan otomatis (cloud-first), tanpa perlu tombol manual.</li>
+            <li><strong>Masa berlaku sesi</strong> — Akun otomatis keluar setelah <strong>Peserta 30 menit</strong>, <strong>Pengurus 45 menit</strong>, dan <strong>Administrator 60 menit</strong>, demi keamanan akun. Bila sesi habis, muncul pemberitahuan <em>&ldquo;Sesi Anda sudah habis, silakan login kembali.&rdquo;</em></li>
+          </ul>
+        </div>
+
+        <p class="tiny muted center mt-14">Ad Maiorem Dei Gloriam · Ite, Inflammate Omnia</p>
+      </div>
+    </section>
+
+    <!-- ============ REGISTRASI PENGGUNA (ADMIN) ============ -->
+    <section id="page-registrasi" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="quill"></span>Registrasi Pengguna Baru</div>
+        <p class="card-sub">Fitur ini hanya dapat diakses oleh Administrator untuk menambahkan pengguna baru.</p>
+
+        <div class="form-group">
+          <label for="regNama">Nama Lengkap</label>
+          <input type="text" id="regNama" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label for="regUser">Username</label>
+          <input type="text" id="regUser" class="form-control" autocapitalize="none" spellcheck="false" />
+        </div>
+        <div class="form-group">
+          <label for="regPass">Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="regPass" class="form-control" autocomplete="new-password" />
+            <button class="pw-eye" type="button" aria-pressed="false" aria-label="Tampilkan password"
+                    title="Tampilkan password" data-act="toggleLihatPassword" data-ev="click" data-a1="@self">
+              <span class="ic" data-ic="eye"></span>
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="regHP">Nomor Telepon / HP</label>
+          <input type="tel" id="regHP" class="form-control" placeholder="08xxxxxxxxxx" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="regRole">Peran</label>
+            <select id="regRole" class="form-control">
+              <option value="peserta">Peserta</option>
+              <option value="pengurus">Pengurus</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="regStatus">Status</label>
+            <select id="regStatus" class="form-control">
+              <option value="aktif">Aktif</option>
+              <option value="nonaktif">Nonaktif</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" type="button" data-act="registerUser" data-ev="click">
+          <span class="ic" data-ic="quill"></span>Daftarkan Pengguna
+        </button>
+        <p class="tiny muted mt-10">
+          Ingin mencatat <strong>banyak nomor sekaligus</strong> (mis. daftar peserta
+          dari grup WhatsApp) lalu semuanya mendaftar sendiri lewat layar
+          <strong>Daftar</strong>? Gunakan halaman
+          <button class="linklike" type="button" data-act="showPage" data-ev="click" data-a1="member">Input Nomor &amp; Peran</button>
+          — bisa juga memperbarui nomor &amp; peran yang sudah ada.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ INPUT NOMOR & PERAN — MULTIPLE CREATE (ADMIN) ========
+         Menu ini yang mendahului: Administrator mencatat nomor HP/WA beserta
+         peran (bisa banyak sekaligus). Baris yang tercatat inilah satu-satunya
+         nomor yang boleh mendaftar lewat layar "Daftar" untuk umum.
+         ================================================================ -->
+    <section id="page-member" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="halopair"></span>Input Nomor HP &amp; Peran (Banyak Sekaligus)</div>
+        <p class="card-sub">
+          Catat nomor HP/WhatsApp beserta peran untuk banyak orang sekaligus.
+          Nomor yang dicatat di sini menjadi <strong>gerbang pendaftaran</strong>:
+          hanya nomor tersebut yang dapat mendaftar di layar <strong>Daftar</strong>.
+          Akun yang dibuat di sini belum punya password — orangnya mengisinya
+          sendiri saat mendaftar.
+        </p>
+
+        <div class="form-group">
+          <label for="bulkHp">Tempel daftar (satu baris satu orang)</label>
+          <textarea id="bulkHp" class="form-control" rows="7" spellcheck="false"
+            placeholder="081234567890, Nama Lengkap, pengurus&#10;628987654321, Nama Lengkap&#10;081298765432 | Nama Lain | peserta"></textarea>
+          <p class="tiny muted mt-6">
+            Pemisah boleh koma, titik koma, TAB, atau garis tegak. Peran:
+            <strong>admin</strong>, <strong>pengurus</strong>, atau <strong>peserta</strong>
+            (bila kosong memakai peran bawaan di bawah). Nomor boleh ditulis
+            <strong>08…</strong>, <strong>628…</strong>, atau <strong>8…</strong>.
+          </p>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="bulkRole">Peran bawaan</label>
+            <select id="bulkRole" class="form-control">
+              <option value="peserta">Peserta</option>
+              <option value="pengurus">Pengurus</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="bulkStatus">Status awal</label>
+            <select id="bulkStatus" class="form-control">
+              <option value="nonaktif">Menunggu pendaftaran (disarankan)</option>
+              <option value="aktif">Aktif</option>
+            </select>
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-outline" type="button" data-act="periksaBulkHp" data-ev="click">
+            <span class="ic" data-ic="compass"></span>Periksa Daftar
+          </button>
+          <button class="btn btn-primary" type="button" id="btnBulkSimpan" data-act="simpanBulkHp" data-ev="click" disabled>
+            <span class="ic" data-ic="seal"></span>Simpan Semua
+          </button>
+        </div>
+        <p class="tiny muted mt-10" id="bulkRingkasan">Belum ada daftar yang diperiksa.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="eye"></span>Hasil Penomorean</div>
+        <p class="card-sub">
+          <span class="badge badge-aktif">Baru</span> = nomor baru dicatat ·
+          <span class="badge badge-izin">Perbarui</span> = nomor sudah ada, peran/nama diperbarui ·
+          <span class="badge badge-nonaktif">Gagal</span> = tidak dapat disimpan.
+        </p>
+        <div class="table-wrap">
+          <table class="responsive">
+            <thead><tr><th>No</th><th>Nomor HP/WA</th><th>Nama</th><th>Peran</th><th>Keterangan</th></tr></thead>
+            <tbody id="bulkPratinjau"><tr><td colspan="5"><div class="empty">Tekan <strong>Periksa Daftar</strong> untuk melihat hasilnya.</div></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="keyring"></span>Daftar Nomor Tercatat</div>
+        <p class="card-sub">
+          Semua akun yang punya nomor HP. <strong>Belum mendaftar</strong> = nomor
+          sudah tercatat tetapi orangnya belum mengaktifkan akun (belum ada password).
+        </p>
+        <div class="form-group">
+          <input type="search" id="memberSearch" class="form-control" placeholder="Cari nama / nomor / peran…"
+                 autocomplete="off" data-act="renderMemberList" data-ev="input" />
+        </div>
+        <label class="check-inline mb-14">
+          <input type="checkbox" id="memberBelum" data-act="renderMemberList" data-ev="change" />
+          <span>Tampilkan hanya yang belum mendaftar</span>
+        </label>
+        <div class="table-wrap">
+          <table class="responsive">
+            <thead><tr><th>Nomor</th><th>Nama</th><th>Peran</th><th>Pendaftaran</th><th data-role="admin">Tindakan</th></tr></thead>
+            <tbody id="memberBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ MANAJEMEN PESERTA (ADMIN) ============ -->
+    <section id="page-users" class="page hidden">
+      <!-- Pemberitahuan permintaan pemulihan kata sandi dari layar masuk -->
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="keyring"></span>Permintaan Lupa Password</div>
+        <p class="card-sub">
+          Pengurus &amp; Peserta yang lupa password mengirim permintaan dari layar masuk dengan
+          memasukkan nomor HP/WA terdaftar. Hubungi mereka lewat WhatsApp langsung dari daftar ini.
+        </p>
+        <div id="resetRequestList"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="halopair"></span>Manajemen Data Peserta</div>
+        <p class="card-sub">Kelola akun peserta, pengurus, dan administrator. Perubahan tersimpan otomatis dan tersinkron ke semua perangkat.</p>
+        <div class="users-toolbar">
+          <button class="btn btn-gold btn-sm" type="button" data-act="showPage" data-ev="click" data-a1="registrasi">
+            <span class="ic" data-ic="quill"></span><span>Tambah Pengguna Baru</span>
+          </button>
+          <button class="btn btn-outline btn-sm" type="button" data-act="showPage" data-ev="click" data-a1="member">
+            <span class="ic" data-ic="halopair"></span><span>Input Nomor &amp; Peran (Banyak)</span>
+          </button>
+          <button class="btn btn-outline btn-sm" type="button" data-act="showAllPasswords" data-ev="click">
+            <span class="ic" data-ic="eye"></span><span>Lihat Semua Password Akun</span>
+          </button>
+        </div>
+        <p class="tiny muted users-syncnote" id="usersSyncNote">Menampilkan data terbaru di perangkat ini — diperbarui otomatis saat ada perubahan.</p>
+        <div class="form-group users-search">
+          <input type="search" id="userSearchInput" class="form-control" placeholder="Cari nama / username / peran…" autocomplete="off" data-act="renderUsers" data-ev="input" />
+        </div>
+        <div class="table-wrap">
+          <table class="responsive users-table">
+            <thead><tr><th>Nama</th><th>Peran</th><th>Status</th><th>Password</th><th class="col-act">Tindakan</th></tr></thead>
+            <tbody id="usersBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ JADWAL & VENUE (ADMIN & PENGURUS) ============ -->
+    <section id="page-jadwal" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="horarium"></span>Jadwal &amp; Lokasi Acara</div>
+        <p class="card-sub">
+          Buat jadwal acara lengkap dengan lokasi dan radius validasi. Setiap jadwal nantinya dapat menghasilkan kode QR unik yang siap dicetak.
+        </p>
+
+        <div class="form-group">
+          <label for="jadwalNama">Nama Acara</label>
+          <input type="text" id="jadwalNama" class="form-control" placeholder="Contoh: Misa Mingguan, Retreat, ..." />
+        </div>
+        <div class="form-group">
+          <label for="jadwalTgl">Tanggal &amp; Waktu</label>
+          <input type="datetime-local" id="jadwalTgl" class="form-control" data-act="pilihJadwalTgl" data-ev="change" />
+          <!-- Pilihan tanggal & jam ditegaskan dengan tombol OK / Batal dahulu -->
+          <div class="choice-box hidden" id="jadwalTglConfirm">
+            <span class="choice-text" id="jadwalTglPreview">—</span>
+            <div class="choice-actions">
+              <button class="btn btn-primary btn-sm" type="button" data-act="konfirmasiJadwalTgl" data-ev="click">
+                <span class="ic" data-ic="check"></span>OK
+              </button>
+              <button class="btn btn-outline btn-sm" type="button" data-act="batalJadwalTgl" data-ev="click">
+                <span class="ic" data-ic="xmark"></span>Batal
+              </button>
+            </div>
+          </div>
+          <p class="choice-fixed hidden" id="jadwalTglFixed"></p>
+        </div>
+
+        <!-- PEMATERI: satu kolom utama; pemateri ke-2 dibuka lewat kotak centang -->
+        <div class="form-group">
+          <div class="label-row">
+            <label for="jadwalPemateri">Pemateri / Pengisi Materi</label>
+            <label class="check-inline" for="jadwalPemateri2Toggle">
+              <input type="checkbox" id="jadwalPemateri2Toggle" data-act="togglePemateri2" data-ev="change" data-a1="@self.checked" />
+              <span>Pemateri ke-2</span>
+            </label>
+          </div>
+          <input type="text" id="jadwalPemateri" class="form-control" placeholder="Contoh: Romo Yohanes, SJ" />
+          <div class="field-extra hidden" id="jadwalPemateri2Wrap">
+            <input type="text" id="jadwalPemateri2" class="form-control" placeholder="Nama pemateri ke-2" />
+          </div>
+          <p class="tiny muted mt-6">Centang <strong>Pemateri ke-2</strong> bila acara diisi lebih dari satu pemateri.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="jadwalVenue">Nama Lokasi / Sesi</label>
+          <input type="text" id="jadwalVenue" class="form-control" placeholder="Contoh: Gereja St. Ignatius — Aula" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="jadwalDurasi">Durasi (menit)</label>
+            <input type="number" id="jadwalDurasi" class="form-control" value="60" min="5" step="5" />
+          </div>
+          <div class="form-group">
+            <label for="jadwalRadius">Radius Validasi (meter)</label>
+            <input type="number" id="jadwalRadius" class="form-control" value="50" min="10" step="5" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="jadwalLat">Lintang (Latitude)</label>
+            <input type="number" id="jadwalLat" class="form-control" step="any" placeholder="-6.200000" />
+          </div>
+          <div class="form-group">
+            <label for="jadwalLng">Bujur (Longitude)</label>
+            <input type="number" id="jadwalLng" class="form-control" step="any" placeholder="106.816666" />
+          </div>
+        </div>
+
+        <button class="btn btn-outline mb-14" type="button" data-act="pickLocation" data-ev="click">
+          <span class="ic" data-ic="compass"></span>Ambil Koordinat dari Lokasi Saya Saat Ini
+        </button>
+        <p class="tiny muted mb-8">Ketuk pada peta untuk menentukan titik lokasi acara.</p>
+        <div id="mapJadwal" class="map"></div>
+
+        <button class="btn btn-primary mt-14" type="button" data-act="saveJadwal" data-ev="click">
+          <span class="ic" data-ic="seal"></span>Simpan Jadwal
+        </button>
+
+        <div class="divider"></div>
+        <h3 class="mb-8">Daftar Jadwal yang Tersedia</h3>
+        <div id="jadwalList"></div>
+      </div>
+    </section>
+
+    <!-- ============ PEMBUAT QR (ADMIN & PENGURUS) ============ -->
+    <section id="page-qr-gen" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="matrix"></span>Pembuat Kode QR</div>
+        <p class="card-sub">
+          Pilih jadwal acara untuk membuat kode QR. Kode ini memuat informasi sesi, koordinat, dan radius validasi, yang siap Anda cetak dan tempel di lokasi.
+        </p>
+        <div class="form-group">
+          <label for="qrJadwal">Pilih Jadwal Acara</label>
+          <select id="qrJadwal" class="form-control"></select>
+        </div>
+        <button class="btn btn-primary" type="button" data-act="generateQR" data-ev="click">
+          <span class="ic" data-ic="matrix"></span>Buat Kode QR
+        </button>
+        <div id="qrResult" class="mt-14"></div>
+      </div>
+    </section>
+
+    <!-- ============ LOG SISTEM (ADMIN) ============ -->
+    <section id="page-log" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="ledger"></span>Log Aktivitas Sistem</div>
+        <p class="card-sub">
+          Catatan aktivitas ini bersifat rahasia dan hanya dapat diakses oleh Administrator. Peserta dan Pengurus tidak dapat melihat bagian ini.
+        </p>
+        <div class="btn-row mb-14">
+          <button class="btn btn-danger btn-sm" type="button" data-act="clearLogs" data-ev="click" data-a1="@false">
+            <span class="ic" data-ic="scrap"></span>Bersihkan Tampilan Log
+          </button>
+        </div>
+        <div id="logList"></div>
+      </div>
+    </section>
+
+    <!-- ============ LAYOUT PDF DAFTAR HADIR (ADMIN) ============ -->
+    <section id="page-pdf" class="page hidden">
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="dossier"></span>Atur Layout PDF</div>
+        <p class="card-sub">
+          Tentukan tampilan <strong>Daftar Hadir</strong> yang dicetak dari menu Laporan — kop, isi,
+          kolom tabel, kertas, dan blok tanda tangan. Pengaturan ini dipakai semua perangkat.
+        </p>
+        <p class="tiny muted" id="pdfLayoutStatus">—</p>
+        <p class="tiny muted" id="pdfLayoutSync">—</p>
+
+        <div class="divider"></div>
+        <h3 class="mb-8">Kop Halaman</h3>
+        <div class="form-group">
+          <label for="pdfJudul">Judul kop</label>
+          <input type="text" id="pdfJudul" class="form-control" data-pdf="judul" maxlength="120" />
+        </div>
+        <div class="form-group">
+          <label for="pdfLembaga">Nama lembaga / komunitas (opsional)</label>
+          <input type="text" id="pdfLembaga" class="form-control" data-pdf="lembaga" maxlength="120" />
+        </div>
+        <div class="form-group">
+          <label for="pdfMotto">Motto / kalimat di bawah judul</label>
+          <input type="text" id="pdfMotto" class="form-control" data-pdf="motto" maxlength="120" />
+        </div>
+        <div class="form-row">
+          <label class="check-inline"><input type="checkbox" data-pdf="tampilKop" /><span>Tampilkan judul kop</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf="tampilLembaga" /><span>Tampilkan nama lembaga</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf="tampilMotto" /><span>Tampilkan motto</span></label>
+        </div>
+
+        <div class="divider"></div>
+        <h3 class="mb-8">Isi Cetakan</h3>
+        <div class="form-row">
+          <label class="check-inline"><input type="checkbox" data-pdf="judulAcara" /><span>Nama acara</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf="tampilPemateri" /><span>Baris pemateri</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf="tampilInfo" /><span>Hari, tanggal, lokasi, radius</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf="tampilRekap" /><span>Rekap jumlah hadir</span></label>
+        </div>
+
+        <div class="divider"></div>
+        <h3 class="mb-8">Kolom Tabel</h3>
+        <div class="form-row">
+          <label class="check-inline"><input type="checkbox" data-pdf-kolom="no" /><span>No</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf-kolom="nama" disabled /><span>Nama peserta (wajib)</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf-kolom="status" /><span>Status</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf-kolom="tanggal" /><span>Tanggal</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf-kolom="jam" /><span>Jam</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf-kolom="metode" /><span>Metode</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf-kolom="jarak" /><span>Jarak</span></label>
+          <label class="check-inline"><input type="checkbox" data-pdf-kolom="ket" /><span>Keterangan</span></label>
+        </div>
+
+        <div class="divider"></div>
+        <h3 class="mb-8">Kertas &amp; Tulisan</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="pdfPaper">Ukuran kertas</label>
+            <select id="pdfPaper" class="form-control" data-pdf="paper">
+              <option value="A4">A4 (210 × 297 mm)</option>
+              <option value="F4">F4 / Folio (215 × 330 mm)</option>
+              <option value="Letter">Letter (8,5 × 11 inci)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="pdfOrientasi">Orientasi</label>
+            <select id="pdfOrientasi" class="form-control" data-pdf="orientasi">
+              <option value="portrait">Potret (vertikal)</option>
+              <option value="landscape">Landskap (horizontal)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="pdfMargin">Margin (mm)</label>
+            <input type="number" id="pdfMargin" class="form-control" data-pdf="margin" min="5" max="40" step="1" />
+          </div>
+          <div class="form-group">
+            <label for="pdfFontTabel">Font tabel (pt)</label>
+            <input type="number" id="pdfFontTabel" class="form-control" data-pdf="fontTabel" min="7" max="18" step="1" />
+          </div>
+          <div class="form-group">
+            <label for="pdfBorder">Garis tabel (px)</label>
+            <input type="number" id="pdfBorder" class="form-control" data-pdf="border" min="0" max="4" step="1" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="pdfGayaGaris">Garis bawah kop</label>
+            <select id="pdfGayaGaris" class="form-control" data-pdf="gayaGaris">
+              <option value="solid">Tegar</option>
+              <option value="double">Garis ganda</option>
+              <option value="none">Tanpa garis</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="pdfKopWarna">Warna teks kop</label>
+            <input type="color" id="pdfKopWarna" class="form-control" data-pdf="kopWarna" />
+          </div>
+          <div class="form-group">
+            <label for="pdfGarisWarna">Warna garis</label>
+            <input type="color" id="pdfGarisWarna" class="form-control" data-pdf="garisWarna" />
+          </div>
+        </div>
+
+        <div class="divider"></div>
+        <h3 class="mb-8">Tanda Tangan &amp; Kaki</h3>
+        <label class="check-inline mb-14"><input type="checkbox" data-pdf="ttd" /><span>Tampilkan blok tanda tangan</span></label>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="pdfTtdJumlah">Jumlah kolom</label>
+            <select id="pdfTtdJumlah" class="form-control" data-pdf="ttdJumlah">
+              <option value="1">1 kolom</option>
+              <option value="2">2 kolom</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="pdfTtdKiri">Label kolom kiri</label>
+            <input type="text" id="pdfTtdKiri" class="form-control" data-pdf="ttdKiri" maxlength="60" />
+          </div>
+          <div class="form-group">
+            <label for="pdfTtdKanan">Label kolom kanan</label>
+            <input type="text" id="pdfTtdKanan" class="form-control" data-pdf="ttdKanan" maxlength="60" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="pdfFooter">Catatan kaki (opsional)</label>
+          <input type="text" id="pdfFooter" class="form-control" data-pdf="footer" maxlength="200"
+                 placeholder="Contoh: Dicetak oleh … pada …" />
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" type="button" data-act="simpanPdfLayout" data-ev="click">
+            <span class="ic" data-ic="seal"></span>Simpan Layout
+          </button>
+          <button class="btn btn-outline" type="button" data-act="previewPdf" data-ev="click">
+            <span class="ic" data-ic="eye"></span>Pratinjau
+          </button>
+          <button class="btn btn-ghost" type="button" data-act="konfirmasiResetPdfLayout" data-ev="click">
+            <span class="ic" data-ic="scrap"></span>Kembalikan ke Bawaan
+          </button>
+        </div>
+        <p class="tiny muted mt-10">
+          Pratinjau memakai dokumen yang sama dengan hasil cetak. Dalam dialog cetak peramban
+          pilih <strong>Save as PDF</strong>, skala <strong>100%</strong>, dan matikan
+          <em>Headers and footers</em> agar ukuran kertas di sini tetap terpakai.
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="ic" data-ic="eye"></span>Pratinjau Cetakan</div>
+        <p class="card-sub">Contoh isi — bukan data peserta sebenarnya.</p>
+        <iframe id="pdfPreview" class="pdf-preview" title="Pratinjau cetakan daftar hadir"></iframe>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ============ NAVIGASI BAWAH ============ -->
+  <nav class="bottom-nav" aria-label="Navigasi utama">
+    <button class="nav-item active" type="button" data-page="home" data-act="showPage" data-ev="click" data-a1="home" data-a2="@self">
+      <span class="ic" data-ic="chapel"></span>Beranda
+    </button>
+    <button class="nav-item" type="button" data-page="presensi" data-act="showPage" data-ev="click" data-a1="presensi" data-a2="@self">
+      <span class="ic" data-ic="pilgrim"></span>Presensi
+    </button>
+    <button class="nav-item" type="button" data-page="riwayat" data-act="showPage" data-ev="click" data-a1="riwayat" data-a2="@self">
+      <span class="ic" data-ic="codex"></span>Riwayat
+    </button>
+    <button class="nav-item" type="button" data-page="laporan" data-act="showPage" data-ev="click" data-a1="laporan" data-a2="@self">
+      <span class="ic" data-ic="bulla"></span>Laporan
+    </button>
+    <button class="nav-item" type="button" data-page="lainnya" data-act="showPage" data-ev="click" data-a1="lainnya" data-a2="@self">
+      <span class="ic" data-ic="rosette"></span>Lainnya
+    </button>
+  </nav>
+
+</div><!-- /#mainApp -->
+
+<!-- ================= MODAL ================= -->
+<!-- Dialog notifikasi: tampil di TENGAH layar, diringi animasi pop halus
+     (lihat css/pages.css bagian 15). Isi dirakit js/app.js: showModal().
+     tabindex="-1" agar fokus dapat dipindahkan ke dialog saat dibuka. -->
+<div class="modal-overlay" id="modal" role="dialog" aria-modal="true">
+  <div class="modal" id="modalContent" tabindex="-1"></div>
+</div>
+
+<!-- ================= NOTIFIKASI ================= -->
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- Pustaka pendukung (disimpan di cache service worker untuk pemakaian luring).
+     KEAMANAN (M1): integrity SRI sha384 mengunci isi berkas CDN — bila CDN
+     disusupi / berkas berubah satu byte pun, peramban MENOLAK menjalankannya
+     alih-alih mengeksekusi kode asing. Hash dihitung dari berkas per 2026-10-02;
+     bila menaikkan versi pustaka, hitung ulang hash-nya. crossorigin WAJIB
+     agar pemeriksaan integrity diizinkan CORS. -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js" integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous"></script>
+
+<!-- Jaring pengaman PALING AWAL (sebelum app.js): NotAllowedError dari API
+     opsional (SW lama / Background Sync / IndexedDB di iframe) tidak boleh
+     jadi "Uncaught (in promise)". Dipasang di sini agar rejection yang
+     terjadi SEBELUM app.js dimuat pun tertangkap — termasuk dari SW lama
+     (v13/v14) yang masih menguasai halaman sebelum v15 aktif. -->
+<script src="js/guard.js?v=33"></script>
+<!-- Konfigurasi layanan (Supabase) lalu lapisan data basis data -->
+<script src="js/config.js?v=33"></script>
+<script src="js/supabase.js?v=33"></script>
+
+<!-- Database peranti (IndexedDB, luring lebih dahulu) lalu ikon kustom dan inti aplikasi.
+     ?v= dinaikkan SETIAP rilis (bersamaan CONFIG.VERSION pada js/app.js &
+     VERSION pada sw.js) supaya peramban/service worker mengambil app.js baru. -->
+<script src="js/db.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/app.js?v=33"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# Local config overrides (tidak di-commit; berisi kunci asli)
+js/config.local.js
+config.local.js
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# Temp / staging
+_edgetmp/
+*.tmp
+*.bak

@@ -1,0 +1,221 @@
+/* ==========================================================================
+   PRESENSI IGNASIAN — Service Worker (offline-first)
+   --------------------------------------------------------------------------
+   • App shell (HTML/CSS/JS) disimpan lebih dahulu ke cache satu per satu,
+     sehingga satu berkas gagal tidak menggagalkan seluruh pemasangan.
+   • Dokumen   : network-first, jatuh ke cache saat luring.
+   • Aset lokal: cache-first + perbarui di latar.
+   • CDN luar  : stale-while-revalidate (peta, font, pustaka QR).
+   • Data ke Supabase tidak pernah di-cache (selalu daring) — IndexedDB di
+     perangkat tetap menjadi salinan utama sehingga aplikasi aman luring.
+   • Foto galeri Dokumentasi (Google Drive) dicocokkan memakai URL PENUH
+     termasuk query, karena setiap foto hanya dibedakan oleh ?id=… — lihat
+     catatan pada networkFirstCache() & staleWhileRevalidate().
+   --------------------------------------------------------------------------
+   VERSION di bawah adalah versi CACHE, bukan versi aplikasi. Naikkan setiap
+   berkas app shell (HTML/CSS/JS) berubah — BERSAMAAN dengan CONFIG.VERSION
+   pada js/app.js dan ?v= pada index.html — supaya perangkat pengguna benar-
+   benar mengambil berkas terbaru.
+   ========================================================================== */
+const VERSION = 'v35';
+const SHELL_CACHE = 'ign-shell-' + VERSION;
+const RUNTIME_CACHE = 'ign-runtime-' + VERSION;
+
+const SHELL = [
+  './',
+  './index.html',
+  './manifest.json',
+  './css/variables.css',
+  './css/base.css',
+  './css/layout.css',
+  './css/components.css',
+  './css/pages.css',
+  './css/utilities.css',
+  './js/boot.js',
+  './js/guard.js',
+  './js/config.js',
+  './js/supabase.js',
+  './js/db.js',
+  './js/icons.js',
+  './js/app.js',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/maskable-512.png',
+  './icons/apple-touch-icon.png'
+];
+
+const RUNTIME = [
+  'https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js',
+  'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js'
+];
+
+/* Host pratinjau foto Google Drive (galeri Dokumentasi). Semua foto memakai
+   jalur yang SAMA (/thumbnail) dan hanya dibedakan oleh query ?id=…, karena
+   itu cache-nya TIDAK boleh dicocokkan dengan { ignoreSearch: true }. */
+const DRIVE_PREVIEW = /(^|\.)drive\.google\.com$|(^|\.)googleusercontent\.com$/;
+
+async function precache(cacheName, urls) {
+  const cache = await caches.open(cacheName);
+  await Promise.all(urls.map(async url => {
+    try {
+      await cache.add(new Request(url, { cache: 'reload' }));
+    } catch (err) {
+      console.warn('[SW] gagal menyimpan', url, err);
+    }
+  }));
+}
+
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    await precache(SHELL_CACHE, SHELL);
+    await precache(RUNTIME_CACHE, RUNTIME);
+    await self.skipWaiting();
+  })());
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(
+      keys.filter(k => k !== SHELL_CACHE && k !== RUNTIME_CACHE).map(k => caches.delete(k))
+    );
+    await self.clients.claim();
+  })());
+});
+
+async function networkFirst(req) {
+  const cache = await caches.open(SHELL_CACHE);
+  try {
+    const res = await fetch(req);
+    if (res && res.ok) cache.put('./index.html', res.clone());
+    return res;
+  } catch (err) {
+    const hit = (await caches.match(req, { ignoreSearch: true })) || (await cache.match('./index.html'));
+    if (hit) return hit;
+    return new Response(
+      '<!DOCTYPE html><meta charset="utf-8"><title>Luring</title>' +
+      '<p style="font-family:Georgia,serif;padding:24px">Aplikasi belum tersimpan di perangkat ini. ' +
+      'Buka sekali saat daring, lalu dapat digunakan sepenuhnya secara luring.</p>',
+      { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+    );
+  }
+}
+
+async function cacheFirst(req) {
+  /* Ganti nama berkas (app.v15.js dst.) selalu diambil baru — jangan sajikan
+     versi lama dari cache. */
+  try {
+    const u = new URL(req.url);
+    if (/\.(v\d+|min)\.js$/.test(u.pathname) || /[?&]v=\d+/.test(u.search)) {
+      const cache = await caches.open(SHELL_CACHE);
+      const res = await fetch(req);
+      if (res && res.ok) cache.put(req, res.clone());
+      return res;
+    }
+  } catch (e) { /* lanjut ke cache biasa */ }
+  const hit = await caches.match(req, { ignoreSearch: true });
+  if (hit) {
+    revalidate(SHELL_CACHE, req);
+    return hit;
+  }
+  const cache = await caches.open(SHELL_CACHE);
+  try {
+    const res = await fetch(req);
+    if (res && res.ok) cache.put(req, res.clone());
+    return res;
+  } catch (err) {
+    return new Response('', { status: 504, statusText: 'Luring' });
+  }
+}
+
+/* ---------- Pratinjau foto Google Drive (galeri Dokumentasi) --------------
+   Saat daring SELALU ambil berkas terbaru dari jaringan (agar foto yang baru
+   dibagikan/diganti langsung terlihat); salinan cache — dicocokkan dengan URL
+   PENUH termasuk ?id=… — dipakai saat luring atau bila Drive menolak. */
+async function networkFirstCache(req) {
+  const cache = await caches.open(RUNTIME_CACHE);
+  let res = null;
+  try {
+    res = await fetch(req);
+    if (res && (res.ok || res.type === 'opaque')) {
+      cache.put(req, res.clone()).catch(() => { /* kuota penuh — abaikan */ });
+      return res;
+    }
+  } catch (err) { /* luring → pakai salinan cache */ }
+  const hit = await cache.match(req);
+  return hit || res || new Response('', { status: 504, statusText: 'Luring' });
+}
+
+async function staleWhileRevalidate(req) {
+  const cache = await caches.open(RUNTIME_CACHE);
+  /* PENTING: pencocokan memakai URL PENUH — TANPA { ignoreSearch: true }.
+     Opsi itu membuang query dari URL permintaan DAN dari URL tersimpan,
+     sehingga …/thumbnail?id=AAA dan …/thumbnail?id=BBB dianggap berkas yang
+     sama; akibatnya SEMUA thumbnail galeri menampilkan foto pertama yang
+     tersimpan (gejala "thumbnail sama semua" pada 4.8.1). */
+  const hit = await cache.match(req);
+  const network = fetch(req).then(res => {
+    if (res && (res.ok || res.type === 'opaque')) {
+      cache.put(req, res.clone()).catch(() => { /* kuota penuh — abaikan */ });
+    }
+    return res;
+  }).catch(() => null);
+  if (hit) return hit;
+  const res = await network;
+  return res || new Response('', { status: 504, statusText: 'Luring' });
+}
+
+function revalidate(cacheName, req) {
+  caches.open(cacheName).then(cache =>
+    fetch(req).then(res => { if (res && res.ok) cache.put(req, res.clone()); }).catch(() => {})
+  );
+}
+
+self.addEventListener('fetch', event => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+
+  let url;
+  try { url = new URL(req.url); } catch (e) { return; }
+
+  /* Data basis data daring (Supabase) tidak pernah dicache — selalu daring. */
+  if (url.hostname.indexOf('supabase') !== -1) return;
+  if (url.hostname.indexOf('script.google.com') !== -1) return;   // layanan lama: selalu daring
+
+  if (req.mode === 'navigate' || req.destination === 'document') {
+    event.respondWith(networkFirst(req));
+    return;
+  }
+  /* Pratinjau foto Google Drive: utamakan jaringan, cache (kunci = URL penuh)
+     hanya sebagai cadangan saat luring. */
+  if (DRIVE_PREVIEW.test(url.hostname)) {
+    event.respondWith(networkFirstCache(req));
+    return;
+  }
+  if (url.origin === self.location.origin) {
+    event.respondWith(cacheFirst(req));
+    return;
+  }
+  if (url.protocol === 'http:' || url.protocol === 'https:') {
+    event.respondWith(staleWhileRevalidate(req));
+  }
+});
+
+/* Sinkronisasi latar: pengingat bagi aplikasi untuk mengirim antrean */
+async function pingClients() {
+  const all = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+  all.forEach(client => client.postMessage({ type: 'flush-outbox' }));
+}
+
+self.addEventListener('sync', event => {
+  if (event.tag === 'ign-outbox') event.waitUntil(pingClients());
+});
+
+self.addEventListener('message', event => {
+  const data = event.data || {};
+  if (data.type === 'SKIP_WAITING') self.skipWaiting();
+  if (data.type === 'SYNC_NOW') event.waitUntil(pingClients());
+});

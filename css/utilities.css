@@ -1,0 +1,275 @@
+/* css/utilities.css — UTILITIES: helper + responsif + cetak. Urutan muat: variables > base > layout > components > pages > utilities. */
+/* ---------- 19. UTILITAS ------------------------------------------------- */
+.hidden{display:none !important}
+.muted{color:var(--muted)}
+.center{text-align:center}
+.right{text-align:right}
+.nowrap{white-space:nowrap}
+.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.small{font-size:.82rem}
+.tiny{font-size:.72rem}
+.lead{font-size:.95rem;line-height:1.65}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.row-tight{display:flex;align-items:center;gap:6px}
+.spacer{margin-left:auto}
+.mt-0{margin-top:0}.mt-6{margin-top:6px}.mt-10{margin-top:10px}
+.mt-14{margin-top:14px}.mt-20{margin-top:20px}
+.mb-0{margin-bottom:0}.mb-8{margin-bottom:8px}.mb-14{margin-bottom:14px}
+/* Tombol bertekstur seperti tautan — untuk pintasan di dalam paragraf. */
+.linklike{
+  background:none;border:0;padding:0;font:inherit;cursor:pointer;
+  color:var(--brand);text-decoration:underline;
+}
+.linklike:hover{opacity:.8}
+.stack>*+*{margin-top:10px}
+.dash-title{
+  font-family:var(--font-display);font-size:.74rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--muted);margin-bottom:8px;
+}
+.gps-info{font-size:.8rem;color:var(--muted);margin-top:10px}
+.scroll-y{overflow-y:auto;max-height:min(60vh,460px)}
+.steps{
+  padding-left:22px;line-height:1.85;font-size:.9rem;
+  font-family:var(--font-text);
+}
+.steps li+li{margin-top:5px}
+.steps li::marker{color:var(--gold);font-family:var(--font-display)}
+
+/* Tabel menumpuk di layar kecil (label dari atribut data-label) */
+@media (max-width:620px){
+  .table-wrap{border:0;background:transparent;overflow:visible}
+  table.responsive{font-size:.9rem}
+  table.responsive thead{
+    position:absolute;width:1px;height:1px;overflow:hidden;
+    clip:rect(0 0 0 0);white-space:nowrap;
+  }
+  table.responsive,table.responsive tbody,table.responsive tr,table.responsive td{display:block;width:100%}
+  table.responsive tr{
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r-sm);padding:10px 12px;margin-bottom:9px;
+    box-shadow:var(--shadow-1);
+  }
+  table.responsive td{
+    border:0;padding:4px 0;background:transparent !important;
+  }
+  table.responsive td[data-label]::before{
+    content:attr(data-label);display:block;
+    font-family:var(--font-display);font-size:.56rem;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:1px;
+  }
+}
+
+/* ---------- 19b. SELUBUNG AWAL & PINTASAN SESI --------------------------- */
+/* Selubung awal: menutup layar masuk/aplikasi sampai sesi selesai diperiksa.
+   Mencegah kedipan "dialihkan ke halaman login" saat halaman disegarkan
+   (lihat index.html + init() pada js/app.js). */
+.boot-veil{
+  position:fixed;inset:0;z-index:1200;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  background:var(--head-bg);
+}
+html:not([data-boot]) .boot-veil{display:none !important}
+html[data-boot] body{overflow:hidden}
+
+/* Baris acara yang dapat diketuk (pintasan "Sesi Hari Ini" dan pilihan acara
+   pada halaman Presensi). */
+.pick-item{
+  display:flex;gap:11px;align-items:flex-start;width:100%;text-align:left;
+  padding:12px 13px;margin-bottom:8px;
+  background:var(--surface-2);border:1.5px solid var(--line);
+  border-radius:var(--r-sm);cursor:pointer;
+  font-family:var(--font-text);font-size:.9rem;
+  transition:border-color .2s,background .2s,transform .15s;
+}
+.pick-item:active{transform:translateY(1px)}
+.pick-item .ic{width:20px;height:20px;color:var(--gold);flex:0 0 auto;margin-top:2px}
+.pick-item .body{flex:1;min-width:0}
+.pick-item .meta{font-size:.76rem;color:var(--muted);margin-top:2px}
+.pick-item.is-picked{border-color:var(--gold);background:var(--gold-tint)}
+.pick-item.is-picked .ic{color:var(--brand)}
+.pick-item .tail{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.pick-item .tail .btn{margin:0}
+
+/* Baris ringkas pada halaman Riwayat: isi di kiri, lencana + tombol di kanan.
+   Tombol "Hapus" boleh turun ke baris sendiri di layar sempit agar tidak
+   Tombol "Hapus" boleh turun ke baris sendiri di layar sempit agar nama
+   peserta tetap terbaca penuh. */
+.tail-row{
+  display:flex;flex-direction:column;align-items:flex-end;gap:6px;
+  flex:0 0 auto;margin-left:auto;
+}
+@media (max-width:400px){
+  .tail-row{flex-direction:row;align-items:center;flex-wrap:wrap}
+}
+
+/* Daftar informasi di dalam modal (label kiri, nilai kanan). */
+.info-list{
+  display:flex;flex-direction:column;gap:0;
+  margin:10px 0;border:1px solid var(--line);border-radius:var(--r-sm);
+  background:var(--surface-2);overflow:hidden;
+}
+.info-row{
+  display:flex;align-items:flex-start;gap:12px;
+  padding:9px 12px;border-bottom:1px solid var(--line-soft);
+}
+.info-row:last-child{border-bottom:0}
+.info-row .k{
+  flex:0 0 auto;min-width:64px;
+  font-family:var(--font-display);font-size:.6rem;font-weight:600;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  padding-top:2px;
+}
+.info-row .v{flex:1;min-width:0;font-size:.86rem;color:var(--text);overflow-wrap:anywhere}
+
+/* Kata sandi pada tabel Administrator */
+.pw-cell{font-family:'Cascadia Mono',Consolas,'Courier New',monospace;font-size:.86rem;letter-spacing:.02em;overflow-wrap:anywhere}
+.pw-hidden{color:var(--muted);letter-spacing:.18em}
+
+/* ---------- 19c. MANAJEMEN DATA PESERTA (responsif) --------------------------
+   HP kecil (<620px): seluruh tabel berubah menjadi KARTU (aturan .responsive
+   di atas sudah mengubah tr/td jadi blok). Aturan di sini hanya merapikan
+   kartu tsb: avatar tetap sebaris, lencana sejajar, dan 3 tombol aksi menjadi
+   grid 2 kolom yang TIDAK terpotong (masalah pada tangkapan layar: tombol
+   "NONAKTIFKAN" terpotong di tepi kanan).
+   Tablet (621–900px): tabel boleh scroll horizontal dengan aman.
+   Desktop (>900px) : kolom Tindakan rata kanan, tombol rapat satu baris. */
+.users-toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.users-toolbar .btn{width:auto;flex:1 1 200px}
+.u-ident{display:flex;align-items:center;gap:10px;min-width:0;max-width:100%}
+.u-ava{
+  flex:0 0 auto;width:34px;height:34px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-display);font-weight:700;font-size:.9rem;
+  color:#FBF6EC;background:linear-gradient(160deg,#7A2C39,#571D27);
+  border:1px solid var(--gold);
+}
+[data-theme='dark'] .u-ava{color:#241A08;background:linear-gradient(160deg,var(--gold-2),var(--gold))}
+.u-id{display:flex;flex-direction:column;min-width:0;flex:1}
+.u-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.98rem}
+.u-user{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.u-badges{display:flex;flex-wrap:wrap;gap:6px}
+/* LENCANA TIDAK BOLEH MELEBIHI LEBAR SELNYA (mobile-first): teks panjang
+   ("Administrator") turun baris alih-alih meluber menimpa kolom sebelah. */
+.u-badges .badge{
+  max-width:100%;box-sizing:border-box;text-align:center;
+  white-space:normal;overflow-wrap:anywhere;line-height:1.4;
+}
+/* Peran dirapatkan agar muat pada kolom Peran tanpa harus turun baris. */
+#page-users .badge-role{font-size:.56rem;letter-spacing:.06em;padding:3px 8px}
+.u-pw-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.u-pw-actions .btn{width:auto;flex:0 1 auto}
+.u-actions{display:flex;flex-wrap:wrap;gap:6px;max-width:100%}
+.u-actions .u-act{flex:0 1 auto;white-space:nowrap;min-width:0}
+.u-actions .u-act .ic{flex:0 0 auto}
+@media (max-width:620px){
+  .users-toolbar .btn{flex:1 1 100%;width:100%}
+  /* kartu aksi: 2 tombol per baris, teks boleh turun baris agar tidak terpotong */
+  #page-users table.responsive tr{padding:12px 13px}
+  #page-users table.responsive td[data-label='Tindakan']::before{margin-bottom:6px}
+  .u-actions{display:grid;grid-template-columns:1fr 1fr}
+  .u-actions .u-act{
+    width:100%;white-space:normal;text-align:center;line-height:1.35;
+    min-height:42px;justify-content:center;
+  }
+  /* tombol "Atur Ulang" yang ikon-saja di kolom password jangan ikut melebar */
+  .u-actions .u-act.icon-only{grid-column:auto;width:auto;justify-self:start}
+  .u-badges .badge{font-size:.58rem}
+}
+@media (min-width:621px) and (max-width:900px){
+  #page-users .table-wrap{overflow-x:auto}
+  #page-users table{min-width:620px}
+  /* Kolom Peran/Status tidak boleh menyempit sampai lencana menumpuk —
+     bila tidak muat, tabel digulir mendatar (overflow-x sudah auto). */
+  #page-users th:nth-child(2),#page-users td:nth-child(2){min-width:124px}
+  #page-users th:nth-child(3),#page-users td:nth-child(3){min-width:96px}
+  .u-actions .u-act{flex:0 0 auto}
+}
+@media (min-width:901px){
+  #page-users table{table-layout:fixed}
+  #page-users th:nth-child(1),#page-users td:nth-child(1){width:24%}
+  #page-users th:nth-child(2),#page-users td:nth-child(2){width:15%}
+  #page-users th:nth-child(3),#page-users td:nth-child(3){width:12%}
+  #page-users th:nth-child(4),#page-users td:nth-child(4){width:22%}
+  #page-users th:nth-child(5),#page-users td:nth-child(5){width:27%}
+  #page-users td:nth-child(5){text-align:right}
+  .u-actions{justify-content:flex-end}
+}
+
+/* ---------- 19d. LAPORAN — KARTU RINGKAS DI LAYAR KECIL --------------------
+   Di HP, kartu tiap baris laporan disusun MENYAMPING (bukan lagi satu bidang
+   per baris) supaya hemat tempat:
+   • Rekap kehadiran  : Nama · Hadir · Persentase berdiri SEBARIS.
+   • Daftar hadir acara: bidang mengalir beberapa per baris, nama peserta &
+     tombol Kelola memakai lebar penuh agar tetap mudah dibaca/ditekan.
+   Hanya berlaku pada layar kecil (≤620px); di layar lebar tabel tetap normal. */
+@media (max-width:620px){
+  /* -- Rekap kehadiran: Nama · Hadir · Persentase (sebaris) -------------- */
+  #page-laporan #laporanBody tr{
+    display:grid;grid-template-columns:minmax(0,1fr) auto auto;
+    align-items:center;column-gap:12px;row-gap:4px;
+    padding:9px 12px;
+  }
+  #page-laporan #laporanBody td{padding:0;min-width:0;overflow-wrap:anywhere}
+  #page-laporan #laporanBody td+td{
+    padding-left:12px;text-align:right;border-left:1px solid var(--line-soft);
+  }
+  #page-laporan #laporanBody td[data-label]::before{margin-bottom:0;letter-spacing:.06em}
+  /* baris kosong ("belum ada data") memakai seluruh lebar kartu */
+  #page-laporan #laporanBody td[colspan]{grid-column:1/-1;text-align:center;border-left:0}
+
+  /* -- Daftar hadir per acara: bidang mengalir hemat tempat ------------- */
+  #page-laporan #laporanAcaraBody tr{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(76px,1fr));
+    gap:6px 12px;padding:10px 12px;
+  }
+  #page-laporan #laporanAcaraBody td{padding:0;min-width:0}
+  #page-laporan #laporanAcaraBody td[data-label]::before{margin-bottom:0;letter-spacing:.06em}
+  #page-laporan #laporanAcaraBody td[data-label='Nama'],
+  #page-laporan #laporanAcaraBody td[data-label='Kelola'],
+  #page-laporan #laporanAcaraBody td[colspan]{grid-column:1/-1}
+  #page-laporan #laporanAcaraBody td[colspan]{text-align:center}
+}
+
+/* ---------- 20. PENYESUAIAN LAYAR --------------------------------------- */
+@media (min-width:621px){
+  body{padding-bottom:24px}
+  #mainApp{display:flex;flex-direction:column}
+  .app-header{order:-3}
+  .bottom-nav{
+    order:-1;position:sticky;top:calc(68px + var(--safe-t));bottom:auto;z-index:80;
+    border-top:0;border-bottom:1px solid var(--line);
+    border-radius:0;box-shadow:var(--shadow-1);
+    min-height:0;
+  }
+  .nav-item{flex-direction:row;gap:8px;font-size:.68rem;min-height:44px}
+  .container{order:0;width:100%}
+  .stats-grid.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .map{height:300px}
+  /* Modal sudah di tengah layar pada semua ukuran — cukup beri ruang lebih */
+  .modal-overlay{padding:24px}
+  .modal{max-height:82vh}
+}
+@media (max-width:380px){
+  :root{--nav-h:62px}
+  body{font-size:calc(16px * var(--font-scale,1))}
+  .app-header h1{font-size:.9rem}
+  .card{padding:14px}
+  .stat .value{font-size:1.45rem}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.001ms !important;animation-iteration-count:1 !important;
+    transition-duration:.001ms !important;
+  }
+}
+@media print{
+  .bottom-nav,.app-header,.toast{display:none !important}
+  body{background:#fff}
+  .card{box-shadow:none;border-color:#ccc}
+}
+
+/* Peta disesuaikan agar nyaman di tema gelap */
+[data-theme='dark'] .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.86) contrast(.92)}
+[data-theme='dark'] .leaflet-control-attribution{background:rgba(20,15,12,.8);color:#A59881}
+[data-theme='dark'] .leaflet-control-attribution a{color:#C9A961}

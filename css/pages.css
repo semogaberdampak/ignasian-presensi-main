@@ -1,0 +1,181 @@
+/* css/pages.css — PAGES: modal, login, pengaturan, ikon. Urutan muat: variables > base > layout > components > pages > utilities. */
+/* ---------- 15. MODAL & TOAST ------------------------------------------- */
+/* Modal notifikasi (dialog) — SELALU di tengah layar, ringan (tanpa pustaka),
+   menyatu dengan tema terang/gelap: sudut membulat, garis aksen di atas,
+   animasi pop halus, dan opsi ikon + warna nada (tone) untuk
+   sukses / peringatan / bahaya. Latar dikunci saat modal terbuka. */
+.modal-overlay{
+  position:fixed;inset:0;z-index:1000;display:none;
+  align-items:center;justify-content:center;
+  padding:calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b)) calc(16px + var(--safe-l));
+  background:radial-gradient(circle at 50% 38%,rgba(40,22,12,.42),rgba(18,10,6,.64));
+  backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+}
+.modal-overlay.show{display:flex;animation:veilIn .22s ease both}
+.modal-overlay.closing{animation:veilOut .16s ease both}
+@keyframes veilIn{from{opacity:0}to{opacity:1}}
+@keyframes veilOut{from{opacity:1}to{opacity:0}}
+
+.modal{
+  position:relative;
+  width:100%;max-width:400px;max-height:min(86vh,620px);overflow-y:auto;
+  overscroll-behavior:contain;
+  background:var(--surface);color:var(--text);
+  border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:22px 20px calc(18px + var(--safe-b));
+  box-shadow:var(--shadow-3);
+  outline:none;
+  animation:popIn .26s cubic-bezier(.2,.9,.25,1) both;
+}
+.modal::before{
+  content:'';position:absolute;inset:0 0 auto 0;height:3px;
+  border-radius:var(--r-lg) var(--r-lg) 0 0;
+  background:linear-gradient(90deg,var(--gold),var(--brand) 65%,transparent);
+}
+.modal.closing{animation:popOut .16s ease both}
+@keyframes popIn{from{opacity:0;transform:translateY(10px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes popOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(6px) scale(.97)}}
+
+.modal h3{font-size:.98rem;margin-bottom:10px}
+.modal .modal-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.modal .modal-head h3{margin:0}
+.modal .modal-ic{
+  width:38px;height:38px;flex:0 0 auto;padding:9px;
+  border-radius:50%;background:var(--brand-tint);color:var(--brand);
+}
+.modal .modal-body{font-size:.9rem;line-height:1.6}
+.modal .modal-body > * + *{margin-top:8px}
+.modal .modal-actions{margin-top:18px;display:flex;gap:10px}
+.modal .modal-actions .btn{flex:1}
+/* Varian aksi modal yang TOMBOLNYA BANYAK (mis. 4 tombol pada OPEN-GATE):
+   pecah otomatis ke baris berikut agar tetap di dalam kartu pada layar
+   sempit; di layar lebar kembali sebaris bila muat. */
+.modal .modal-actions-wrap{flex-wrap:wrap}
+.modal .modal-actions-wrap .btn{flex:1 1 140px;min-width:0}
+.modal.tone-success::before{background:linear-gradient(90deg,var(--ok),var(--gold) 70%,transparent)}
+.modal.tone-danger::before{background:linear-gradient(90deg,var(--bad),var(--gold) 70%,transparent)}
+.modal.tone-warn::before{background:linear-gradient(90deg,var(--warn),var(--gold) 70%,transparent)}
+.modal.tone-success .modal-ic{background:var(--ok-tint);color:var(--ok)}
+.modal.tone-danger .modal-ic{background:var(--bad-tint);color:var(--bad)}
+.modal.tone-warn .modal-ic{background:var(--warn-tint);color:var(--warn)}
+body.modal-open{overflow:hidden}
+
+.toast{
+  position:fixed;left:50%;top:16px;transform:translate(-50%,-160%);
+  z-index:2000;max-width:min(92vw,440px);
+  padding:12px 18px;border-radius:var(--r-sm);
+  background:var(--surface);color:var(--text);
+  border:1px solid var(--line);border-left:4px solid var(--gold);
+  box-shadow:var(--shadow-3);
+  font-size:.84rem;line-height:1.4;
+  opacity:0;pointer-events:none;
+  transition:transform .3s cubic-bezier(.2,.9,.25,1),opacity .3s;
+}
+.toast.show{transform:translate(-50%,0);opacity:1}
+.toast.success{border-left-color:var(--ok)}
+.toast.error{border-left-color:var(--bad)}
+
+/* ---------- 16. LAYAR MASUK --------------------------------------------- */
+.login-screen{
+  min-height:100vh;min-height:100dvh;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:16px;padding:24px calc(20px + var(--safe-r)) 24px calc(20px + var(--safe-l));
+  background:var(--head-bg);
+}
+.login-screen.hidden{display:none}
+.login-card{
+  width:100%;max-width:420px;
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r-lg);padding:26px 22px;
+  box-shadow:var(--shadow-3);
+}
+.login-crest{
+  width:76px;height:76px;margin:0 auto 16px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-display);font-weight:700;font-size:1.3rem;letter-spacing:.04em;
+  color:#3B1109;background:radial-gradient(circle at 50% 38%,var(--gold-2),var(--gold) 72%);
+  box-shadow:0 0 0 1px rgba(0,0,0,.2),0 0 0 6px var(--surface-2),0 0 0 7px var(--gold);
+}
+.login-title{text-align:center;font-size:1.32rem;letter-spacing:.06em;text-transform:uppercase}
+.login-sub{
+  text-align:center;color:var(--gold);
+  font-family:var(--font-display);font-size:.66rem;letter-spacing:.2em;
+  text-transform:uppercase;margin:4px 0 22px;
+}
+.login-hint{
+  font-size:.78rem;color:var(--muted);text-align:center;line-height:1.7;
+}
+.login-foot{color:var(--head-accent);font-size:.7rem;letter-spacing:.16em;
+  font-family:var(--font-display);text-transform:uppercase}
+
+/* ---------- 17. PENGATURAN ---------------------------------------------- */
+.setting{
+  display:flex;align-items:center;gap:12px;
+  padding:14px 0;border-bottom:1px solid var(--line-soft);
+}
+.setting:last-child{border-bottom:0}
+.setting .ic{width:22px;height:22px;color:var(--gold);flex:0 0 auto}
+.setting .body{flex:1;min-width:0}
+.setting .name{font-family:var(--font-display);font-size:.82rem;color:var(--text);letter-spacing:.03em}
+.setting .desc{font-size:.78rem;color:var(--muted);margin-top:2px}
+.switch{
+  position:relative;flex:0 0 auto;
+  width:62px;height:34px;border-radius:20px;border:1.5px solid var(--line);
+  background:var(--surface-2);cursor:pointer;padding:0;
+  transition:background .25s,border-color .25s;
+}
+.switch .knob{
+  position:absolute;top:3px;left:3px;width:26px;height:26px;border-radius:50%;
+  background:var(--surface);border:1px solid var(--line);
+  box-shadow:var(--shadow-1);
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .28s cubic-bezier(.2,.9,.25,1),background .25s;
+}
+.switch .knob .ic{width:15px;height:15px;color:var(--gold)}
+.switch[aria-pressed='true']{background:var(--primary-bg);border-color:transparent}
+.switch[aria-pressed='true'] .knob{transform:translateX(28px);background:#FBF6EC;color:#3B1109}
+.switch[aria-pressed='true'] .knob .ic{color:#8A5A16}
+/* ---------- 17b. LAYAR DAFTAR & PRATINJAU CETAKAN ------------------------
+   Layar Daftar memakai kelas .login-screen/.login-card yang sama dengan
+   layar masuk; tambahan di bawah hanya untuk kotak nomor terkunci & pesan. */
+.daftar-note{
+  margin-top:14px;padding:12px;border:1px solid var(--line);
+  border-radius:var(--r-sm);background:var(--surface-2);
+  font-size:.82rem;line-height:1.6;text-align:left;
+}
+.daftar-kunci{
+  margin-bottom:14px;border:1px dashed var(--line);
+  border-radius:var(--r-sm);overflow:hidden;background:var(--surface-2);
+}
+.daftar-kunci .baris{
+  display:flex;flex-direction:column;gap:2px;padding:10px 12px;
+}
+.daftar-kunci .baris+.baris{border-top:1px dashed var(--line)}
+.daftar-kunci .baris>span{
+  font-family:var(--font-display);font-size:.6rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--muted);
+}
+.daftar-kunci .baris>strong{font-size:1rem;color:var(--text)}
+.daftar-kunci .baris>em{font-style:normal;font-size:.68rem;color:var(--muted)}
+.daftar-kunci .baris>strong[aria-readonly]{
+  background:var(--line-soft);border-radius:4px;padding:2px 6px;
+  cursor:not-allowed;
+}
+
+/* Pratinjau memakai dokumen yang sama dengan cetakan sungguhan, jadi cukup
+   menampilkan halaman "kertas" di dalam kartu. */
+.pdf-preview{
+  width:100%;height:520px;border:1px solid var(--line);
+  border-radius:10px;background:var(--surface-2);display:block;
+}
+
+/* ---------- 18. IKON (sprite SVG kustom) -------------------------------- */
+.ic{
+  display:inline-block;flex:0 0 auto;
+  width:20px;height:20px;vertical-align:-.22em;
+  color:inherit;
+}
+.ic>svg{display:block;width:100%;height:100%}
+.ic-lg{width:26px;height:26px}
+.ic-sm{width:16px;height:16px}
+.ic-xl{width:52px;height:52px}

@@ -1,0 +1,50 @@
+{
+  "name": "Presensi Ignasian",
+  "short_name": "Ignasian",
+  "description": "Presensi digital berbasis lokasi & QR dengan semangat Ignatian — luring lebih dahulu, sinkron menyusul. Ad Maiorem Dei Gloriam.",
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#F6F1E7",
+  "theme_color": "#6E2632",
+  "lang": "id-ID",
+  "dir": "ltr",
+  "categories": ["productivity", "education"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Presensi — Pindai QR",
+      "short_name": "Presensi",
+      "description": "Buka tab pemindaian QR untuk presensi",
+      "url": "./index.html#presensi"
+    },
+    {
+      "name": "Riwayat Presensi",
+      "short_name": "Riwayat",
+      "description": "Lihat riwayat presensi Anda",
+      "url": "./index.html#riwayat"
+    }
+  ]
+}
